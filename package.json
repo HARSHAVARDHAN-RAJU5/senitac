@@ -1,0 +1,18 @@
+{
+  "type": "module",
+  "name": "senitac",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1",
+    "multer": "^2.0.2",
+    "pg": "^8.18.0"
+  }
+}
