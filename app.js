@@ -5,6 +5,7 @@ import invoiceExtractionRoutes from "./step2-extraction/routes/invoiceExtraction
 import invoiceValidationRoutes from "./step3-validation/routes/routesValidation.js";
 import invoiceMatchingRoutes from "./step4-matching/routes/routesMatching.js";
 import invoiceComplianceRoutes from "./step5-compliance/routes/routesCompliance.js";
+import invoiceApprovalRoutes from "./step6-approval/routes/approvalRoutes.js";
 
 const app = express();
 
@@ -24,6 +25,9 @@ app.use("/api/invoices/match", invoiceMatchingRoutes);
 
 // STEP 5 – Compliance Engine
 app.use("/api/invoices/compliance", invoiceComplianceRoutes);
+
+// STEP 6 – Approval & Workflow
+app.use("/api/invoices/approval", invoiceApprovalRoutes);
 
 app.listen(3000, () => {
   console.log("Server running on port 3000");
