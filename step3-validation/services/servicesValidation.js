@@ -1,8 +1,7 @@
-const db = require("../../db");
+import db from "../../db.js";
 
 async function validateVendor(invoiceId) {
 
-  // 1️⃣ Get extracted data
   const extractedResult = await db.query(
     "SELECT data, extraction_status FROM invoice_extracted_data WHERE invoice_id = $1",
     [invoiceId]
@@ -22,7 +21,6 @@ async function validateVendor(invoiceId) {
   const taxId = extracted.tax_id?.trim();
   const bankAccount = extracted.bank_account?.trim();
 
-  // 2️⃣ Lookup vendor by tax_id
   const vendorResult = await db.query(
     "SELECT * FROM vendor_master WHERE tax_id = $1",
     [taxId]
@@ -38,7 +36,6 @@ async function validateVendor(invoiceId) {
 
   const vendor = vendorResult.rows[0];
 
-  // 3️⃣ Validation checks
   let legalStatus = "MATCH";
   let taxStatus = "MATCH";
   let bankStatus = "MATCH";
@@ -55,7 +52,6 @@ async function validateVendor(invoiceId) {
     bankStatus = "MISMATCH";
   }
 
-  // 4️⃣ Overall decision
   let overallStatus = "VALID";
 
   if (taxStatus === "MISMATCH" || bankStatus === "MISMATCH") {
@@ -64,7 +60,6 @@ async function validateVendor(invoiceId) {
     overallStatus = "REVIEW_REQUIRED";
   }
 
-  // 5️⃣ Store validation result
   await db.query(
     `INSERT INTO invoice_validation_results 
     (invoice_id, vendor_id, legal_status, tax_status, bank_status, overall_status, validated_at)
@@ -86,4 +81,4 @@ async function validateVendor(invoiceId) {
   };
 }
 
-module.exports = validateVendor;
+export default validateVendor;

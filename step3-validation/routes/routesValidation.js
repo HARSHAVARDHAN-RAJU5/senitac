@@ -1,6 +1,6 @@
-const express = require("express");
+import express from "express";
 const router = express.Router();
-const validateVendor = require("../services/step3.service");
+import validateVendor from "../services/servicesValidation.js";
 
 router.post("/validate/:invoice_id", async (req, res) => {
   try {
@@ -16,4 +16,4 @@ router.post("/validate/:invoice_id", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
