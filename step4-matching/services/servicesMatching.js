@@ -2,27 +2,30 @@ import db from "../../db.js";
 
 async function matchInvoice(invoiceId) {
 
-  // 1️⃣ Ensure STEP 3 was VALID
   const validation = await db.query(
     "SELECT overall_status FROM invoice_validation_results WHERE invoice_id = $1",
     [invoiceId]
   );
 
-  if (validation.rows.length === 0 || validation.rows[0].overall_status !== "VALID") {
+  if (!validation.rows.length || validation.rows[0].overall_status !== "VALID") {
     return {
-      invoice_id: invoiceId,
-      message: "Invoice not eligible for PO matching"
+      success: false,
+      status: "BLOCKED",
+      reason: "Invoice not eligible for PO matching"
     };
   }
 
-  // 2️⃣ Get extracted invoice data
   const extractedResult = await db.query(
     "SELECT data FROM invoice_extracted_data WHERE invoice_id = $1",
     [invoiceId]
   );
 
-  if (extractedResult.rows.length === 0) {
-    throw new Error("No extracted invoice data found");
+  if (!extractedResult.rows.length) {
+    return {
+      success: false,
+      status: "BLOCKED",
+      reason: "No extracted invoice data found"
+    };
   }
 
   const extracted = extractedResult.rows[0].data;
@@ -32,50 +35,38 @@ async function matchInvoice(invoiceId) {
 
   if (!poNumber) {
     await storeResult(invoiceId, null, "MISMATCH", true, false, true);
+
     return {
-      invoice_id: invoiceId,
-      matching_status: "MISMATCH",
+      success: true,
+      status: "MISMATCH",
       flags: { missing_po: true }
     };
   }
 
-  // 3️⃣ Fetch Purchase Order
   const poResult = await db.query(
     "SELECT * FROM purchase_orders WHERE po_number = $1",
     [poNumber]
   );
 
-  if (poResult.rows.length === 0) {
+  if (!poResult.rows.length) {
     await storeResult(invoiceId, poNumber, "MISMATCH", true, false, false);
+
     return {
-      invoice_id: invoiceId,
-      matching_status: "MISMATCH",
+      success: true,
+      status: "MISMATCH",
       flags: { missing_po: true }
     };
   }
 
   const po = poResult.rows[0];
 
-  // 4️⃣ Simple total comparison (2-way matching for now)
-  let priceVarianceFlag = false;
-  let quantityVarianceFlag = false;
-
-  const tolerance = 0.02; // 2%
-
+  const tolerance = 0.02;
   const variance = Math.abs(invoiceTotal - po.total_amount) / po.total_amount;
 
-  if (variance > tolerance) {
-    priceVarianceFlag = true;
-  }
+  const priceVarianceFlag = variance > tolerance;
 
-  // 5️⃣ Determine status
-  let matchingStatus = "MATCHED";
+  const matchingStatus = priceVarianceFlag ? "PARTIAL_MATCH" : "MATCHED";
 
-  if (priceVarianceFlag) {
-    matchingStatus = "PARTIAL_MATCH";
-  }
-
-  // 6️⃣ Store result
   await storeResult(
     invoiceId,
     poNumber,
@@ -86,8 +77,8 @@ async function matchInvoice(invoiceId) {
   );
 
   return {
-    invoice_id: invoiceId,
-    matching_status: matchingStatus,
+    success: true,
+    status: matchingStatus,
     flags: {
       price_variance: priceVarianceFlag
     }

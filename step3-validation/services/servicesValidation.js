@@ -7,12 +7,20 @@ async function validateVendor(invoiceId) {
     [invoiceId]
   );
 
-  if (extractedResult.rows.length === 0) {
-    throw new Error("No extracted data found");
+  if (!extractedResult.rows.length) {
+    return {
+      success: false,
+      status: "BLOCKED",
+      reason: "No extracted data found"
+    };
   }
 
   if (extractedResult.rows[0].extraction_status !== "SUCCESS") {
-    return { overall_status: "REVIEW_REQUIRED" };
+    return {
+      success: false,
+      status: "REVIEW_REQUIRED",
+      reason: "Extraction not successful"
+    };
   }
 
   const extracted = extractedResult.rows[0].data;
@@ -26,10 +34,10 @@ async function validateVendor(invoiceId) {
     [taxId]
   );
 
-  if (vendorResult.rows.length === 0) {
+  if (!vendorResult.rows.length) {
     return {
-      invoice_id: invoiceId,
-      overall_status: "REVIEW_REQUIRED",
+      success: false,
+      status: "REVIEW_REQUIRED",
       reason: "Vendor not found"
     };
   }
@@ -75,9 +83,11 @@ async function validateVendor(invoiceId) {
   );
 
   return {
-    invoice_id: invoiceId,
-    vendor_id: vendor.vendor_id,
-    overall_status: overallStatus
+    success: true,
+    status: overallStatus,
+    data: {
+      vendor_id: vendor.vendor_id
+    }
   };
 }
 

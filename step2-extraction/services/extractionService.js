@@ -18,14 +18,13 @@ function calculateConfidence(text) {
 
 async function extractPdfText(filePath) {
   const data = new Uint8Array(fs.readFileSync(filePath));
-
   const pdf = await pdfjsLib.getDocument({ data }).promise;
+
   let fullText = "";
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const content = await page.getTextContent();
-
     const pageText = content.items.map(item => item.str).join(" ");
     fullText += pageText + "\n";
   }
@@ -33,14 +32,15 @@ async function extractPdfText(filePath) {
   return fullText;
 }
 
-export async function extractInvoice(invoice_id) {
+export async function runExtraction(invoice_id) {
+
   const res = await pool.query(
     "SELECT file_path, mime_type FROM invoices WHERE invoice_id = $1",
     [invoice_id]
   );
 
   if (res.rows.length === 0) {
-    throw new Error("Invoice not found in STEP 1");
+    throw new Error("Invoice not found");
   }
 
   const { file_path, mime_type } = res.rows[0];
@@ -68,7 +68,7 @@ export async function extractInvoice(invoice_id) {
   const extractedData = {
     extraction_type: extractionType,
     text: extractedText,
-    confidence,
+    confidence
   };
 
   await pool.query(

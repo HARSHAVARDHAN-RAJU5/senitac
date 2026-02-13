@@ -1,29 +1,69 @@
 import db from "../../db.js";
 import { determineApprovalLevel } from "./approvalRules.js";
 
-export async function processStep6(invoiceData, complianceData) {
+export async function runApproval(invoice_id) {
 
-    const { invoice_id, invoice_total } = invoiceData;
-    const { overall_compliance_status } = complianceData;
+    const complianceRes = await db.query(
+        `
+        SELECT overall_compliance_status
+        FROM invoice_compliance_results
+        WHERE invoice_id = $1
+        `,
+        [invoice_id]
+    );
 
-    // If compliance failed → reject immediately
-    if (overall_compliance_status === "BLOCKED") {
+    if (!complianceRes.rows.length) {
         return {
-            invoice_id,
-            approval_status: "REJECTED",
-            reason: "Compliance Failure"
+            success: false,
+            status: "BLOCKED",
+            reason: "Compliance result not found"
         };
     }
 
-    const approvalLevel = determineApprovalLevel(invoice_total);
+    const complianceStatus = complianceRes.rows[0].overall_compliance_status;
 
-    const result = await db.query(
-        `INSERT INTO invoice_approval_workflow
-        (invoice_id, assigned_to, approval_level)
-        VALUES ($1, $2, $3)
-        RETURNING *`,
-        [invoice_id, approvalLevel, approvalLevel]
+    if (complianceStatus === "BLOCKED") {
+        return {
+            success: false,
+            status: "BLOCKED",
+            reason: "Compliance failure"
+        };
+    }
+
+    const invoiceRes = await db.query(
+        `
+        SELECT data
+        FROM invoice_extracted_data
+        WHERE invoice_id = $1
+        `,
+        [invoice_id]
     );
 
-    return result.rows[0];
+    if (!invoiceRes.rows.length) {
+        return {
+            success: false,
+            status: "BLOCKED",
+            reason: "Invoice data not found"
+        };
+    }
+
+    const invoiceData = invoiceRes.rows[0].data;
+    const invoiceTotal = invoiceData.invoice_total;
+
+    const approvalLevel = determineApprovalLevel(invoiceTotal);
+
+    await db.query(
+        `
+        INSERT INTO invoice_approval_workflow
+        (invoice_id, assigned_to, approval_level, approval_status, created_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        `,
+        [invoice_id, approvalLevel, approvalLevel, "APPROVED"]
+    );
+
+    return {
+        success: true,
+        status: "APPROVED",
+        approval_level: approvalLevel
+    };
 }

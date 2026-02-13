@@ -1,24 +1,67 @@
 import db from "../../db.js";
 
-export async function schedulePayment(invoiceData, approvalData) {
+export async function runPaymentScheduling(invoice_id) {
 
-    const { invoice_id, due_date, payment_method } = invoiceData;
-    const { approval_status } = approvalData;
+    const approvalRes = await db.query(
+        `
+        SELECT approval_status
+        FROM invoice_approval_workflow
+        WHERE invoice_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+        `,
+        [invoice_id]
+    );
 
-    if (approval_status !== "APPROVED") {
+    if (!approvalRes.rows.length) {
         return {
-            invoice_id,
-            error: "Invoice not approved. Cannot schedule payment."
+            success: false,
+            status: "BLOCKED",
+            reason: "Approval record not found"
         };
     }
 
-    const result = await db.query(
-        `INSERT INTO invoice_payment_schedule
-        (invoice_id, payment_due_date, payment_method)
-        VALUES ($1, $2, $3)
-        RETURNING *`,
-        [invoice_id, due_date, payment_method]
+    if (approvalRes.rows[0].approval_status !== "APPROVED") {
+        return {
+            success: false,
+            status: "BLOCKED",
+            reason: "Invoice not approved"
+        };
+    }
+
+    const invoiceRes = await db.query(
+        `
+        SELECT data
+        FROM invoice_extracted_data
+        WHERE invoice_id = $1
+        `,
+        [invoice_id]
     );
 
-    return result.rows[0];
+    if (!invoiceRes.rows.length) {
+        return {
+            success: false,
+            status: "BLOCKED",
+            reason: "Invoice data not found"
+        };
+    }
+
+    const invoiceData = invoiceRes.rows[0].data;
+
+    const dueDate = invoiceData.due_date;
+    const paymentMethod = invoiceData.payment_method || "BANK_TRANSFER";
+
+    await db.query(
+        `
+        INSERT INTO invoice_payment_schedule
+        (invoice_id, payment_status, payment_due_date, payment_method, scheduled_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        `,
+        [invoice_id, "SCHEDULED", dueDate, paymentMethod]
+    );
+
+    return {
+        success: true,
+        status: "PAYMENT_READY"
+    };
 }

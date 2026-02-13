@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
-import  pool  from "../../db.js";   
+import pool from "../../db.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,16 +34,12 @@ export async function handleInvoiceIntake({
 
   const receivedAt = new Date();
 
-  // console.log("ABOUT TO INSERT INTO DB:", {
-  //   invoiceId,
-  //   source,
-  //   receivedFrom,
-  //   database: "senitac_ap",
-  //   port: 5433
-  // });
+  const client = await pool.connect();
 
   try {
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    await client.query(
       `
       INSERT INTO invoices (
         invoice_id,
@@ -57,7 +53,6 @@ export async function handleInvoiceIntake({
         received_at
       )
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-      RETURNING invoice_id
       `,
       [
         invoiceId,
@@ -72,15 +67,26 @@ export async function handleInvoiceIntake({
       ]
     );
 
-    // console.log("DB INSERT SUCCESS:", result.rows);
+    await client.query(
+      `
+      INSERT INTO invoice_state_machine (invoice_id, current_state)
+      VALUES ($1, $2)
+      `,
+      [invoiceId, "RECEIVED"]
+    );
+
+    await client.query("COMMIT");
 
     return {
       invoice_id: invoiceId,
-      status: "received",
+      status: "RECEIVED",
       received_at: receivedAt.toISOString()
     };
+
   } catch (err) {
-    console.error(" DB INSERT FAILED:", err);
+    await client.query("ROLLBACK");
     throw err;
+  } finally {
+    client.release();
   }
 }
