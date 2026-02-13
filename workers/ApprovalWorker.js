@@ -1,39 +1,31 @@
 import pool from "../db.js";
 import { runApproval } from "../step6-approval/services/approvalService.js";
 
-class ApprovalWorker {
+export async function execute(invoice_id) {
+  const stateCheck = await pool.query(
+    `
+      SELECT current_state
+      FROM invoice_state_machine
+      WHERE invoice_id = $1
+    `,
+    [invoice_id]
+  );
 
-    async execute(invoice_id) {
+  if (!stateCheck.rows.length) {
+    throw new Error("State record not found");
+  }
 
-        const stateCheck = await pool.query(
-            `
-            SELECT current_state
-            FROM invoice_state_machine
-            WHERE invoice_id = $1
-            `,
-            [invoice_id]
-        );
+  const currentState = stateCheck.rows[0].current_state;
 
-        if (!stateCheck.rows.length) {
-            throw new Error("State record not found");
-        }
+  if (currentState !== "PENDING_APPROVAL") {
+    throw new Error("Invalid state for ApprovalWorker");
+  }
 
-        const currentState = stateCheck.rows[0].current_state;
+  const approvalResult = await runApproval(invoice_id);
 
-        if (currentState !== "PENDING_APPROVAL") {
-            throw new Error("Invalid state for ApprovalWorker");
-        }
+  if (!approvalResult || approvalResult.success !== true) {
+    return { nextState: "BLOCKED" };
+  }
 
-        const approvalResult = await runApproval(invoice_id);
-
-        if (!approvalResult.success) {
-            return { next_state: "BLOCKED" };
-        }
-
-        return {
-            next_state: "APPROVED"
-        };
-    }
+  return { nextState: "APPROVED" };
 }
-
-export default new ApprovalWorker();

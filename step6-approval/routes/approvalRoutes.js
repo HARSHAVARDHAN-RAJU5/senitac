@@ -1,5 +1,5 @@
 import express from "express";
-import { processStep6 } from "../services/approvalService.js";
+import { runApproval } from "../services/approvalService.js";
 
 const router = express.Router();
 
@@ -7,7 +7,7 @@ router.post("/step6/process", async (req, res) => {
     try {
         const { invoiceData, complianceData } = req.body;
 
-        const result = await processStep6(invoiceData, complianceData);
+        const result = await runApproval(invoiceData, complianceData);
 
         res.json({
             message: "Step 6 processed successfully",

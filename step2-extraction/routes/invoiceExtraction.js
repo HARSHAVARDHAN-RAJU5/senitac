@@ -1,12 +1,12 @@
 import express from "express";
-import { extractInvoice } from "../services/extractionService.js";
+import { runExtraction } from "../services/extractionService.js";
 
 const router = express.Router();
 
 router.post("/:invoice_id", async (req, res) => {
   try {
     const { invoice_id } = req.params;
-    const data = await extractInvoice(invoice_id);
+    const data = await runExtraction(invoice_id);
 
     res.status(200).json({
       message: "Invoice extracted successfully",

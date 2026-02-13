@@ -1,5 +1,5 @@
 import pool from "../db.js";
-import { runPaymentScheduling } from "../step7-payment/services/paymentService.js";
+import matchInvoice from "../step4-matching/services/serviceMatching.js";
 
 export async function execute(invoice_id) {
   const stateCheck = await pool.query(
@@ -17,17 +17,21 @@ export async function execute(invoice_id) {
 
   const currentState = stateCheck.rows[0].current_state;
 
-  if (currentState !== "APPROVED") {
-    throw new Error("Invalid state for PaymentWorker");
+  if (currentState !== "VALIDATING") {
+    throw new Error("Invalid state for MatchingWorker");
   }
 
-  const paymentResult = await runPaymentScheduling(invoice_id);
+  const matchingResult = await matchInvoice(invoice_id);
 
-  if (!paymentResult || paymentResult.success !== true) {
+  if (!matchingResult || matchingResult.success !== true) {
+    return { nextState: "BLOCKED" };
+  }
+
+  if (matchingResult.status === "MISMATCH") {
     return { nextState: "BLOCKED" };
   }
 
   return {
-    nextState: "PAYMENT_READY"
+    nextState: "MATCHING"
   };
 }
