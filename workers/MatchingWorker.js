@@ -1,5 +1,5 @@
 import pool from "../db.js";
-import matchInvoice from "../step4-matching/services/serviceMatching.js";
+import matchInvoice from "../step4-matching/services/servicesMatching.js";
 
 export async function execute(invoice_id) {
   const stateCheck = await pool.query(

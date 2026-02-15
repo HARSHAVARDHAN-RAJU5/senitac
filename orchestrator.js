@@ -2,6 +2,8 @@ import { createClient } from "redis";
 import pool from "./db.js";
 
 import * as IntakeExtractionWorker from "./workers/IntakeExtractionWorker.js";
+import * as ValidationWorker from "./workers/ValidationWorker.js";
+import * as MatchingWorker from "./workers/MatchingWorker.js";
 import * as FinancialControlWorker from "./workers/FinancialControlWorker.js";
 import * as ApprovalWorker from "./workers/ApprovalWorker.js";
 import * as PaymentWorker from "./workers/PaymentWorker.js";
@@ -14,10 +16,9 @@ redis.on("error", (err) => {
   console.error("Redis Error:", err);
 });
 
-
 const STATE_TRANSITIONS = {
-  RECEIVED: ["STRUCTURED"],
-  STRUCTURED: ["VALIDATING"],
+  RECEIVED: ["STRUCTURED", "BLOCKED"],
+  STRUCTURED: ["VALIDATING", "BLOCKED","RISK_REVIEW"],
   VALIDATING: ["MATCHING", "BLOCKED"],
   MATCHING: ["RISK_REVIEW", "BLOCKED"],
   RISK_REVIEW: ["PENDING_APPROVAL", "BLOCKED"],
@@ -25,7 +26,6 @@ const STATE_TRANSITIONS = {
   APPROVED: ["PAYMENT_READY"],
   PAYMENT_READY: ["COMPLETED"]
 };
-
 
 function resolveWorker(state) {
   switch (state) {
@@ -44,7 +44,13 @@ function resolveWorker(state) {
     case "RISK_REVIEW":
       return ApprovalWorker;
 
+    case "PENDING_APPROVAL":
+      return ApprovalWorker;
+
     case "APPROVED":
+      return PaymentWorker;
+
+    case "PAYMENT_READY":
       return PaymentWorker;
 
     default:
@@ -79,7 +85,7 @@ async function processInvoice(invoice_id) {
       await pool.query(
         `UPDATE invoice_state_machine
          SET current_state = 'BLOCKED',
-             updated_at = NOW()
+             last_updated = NOW()
          WHERE invoice_id = $1`,
         [invoice_id]
       );
@@ -109,7 +115,7 @@ async function processInvoice(invoice_id) {
         `UPDATE invoice_state_machine
          SET current_state = $1,
              retry_count = 0,
-             updated_at = NOW()
+             last_updated = NOW()
          WHERE invoice_id = $2`,
         [result.nextState, invoice_id]
       );
@@ -122,7 +128,7 @@ async function processInvoice(invoice_id) {
       await pool.query(
         `UPDATE invoice_state_machine
          SET retry_count = retry_count + 1,
-             updated_at = NOW()
+             last_updated = NOW()
          WHERE invoice_id = $1`,
         [invoice_id]
       );
@@ -131,7 +137,6 @@ async function processInvoice(invoice_id) {
     }
   }
 }
-
 
 async function listen() {
   console.log("Orchestrator connected to Redis & Postgres");
@@ -171,8 +176,6 @@ async function listen() {
     }
   }
 }
-
-
 async function start() {
   await redis.connect();
   await listen();

@@ -1,5 +1,5 @@
 import pool from "../db.js";
-import validateVendor from "../step3-validation/services/serviceValidation.js";
+import validateVendor from "../step3-validation/services/servicesValidation.js";
 
 export async function execute(invoice_id) {
   const stateCheck = await pool.query(
@@ -23,19 +23,44 @@ export async function execute(invoice_id) {
 
   const validationResult = await validateVendor(invoice_id);
 
-  if (!validationResult || validationResult.success !== true) {
+  console.log("Validation Result:", validationResult);
+
+  if (!validationResult) {
+    await storeError(invoice_id, "Vendor validation returned null");
+    return { nextState: "BLOCKED" };
+  }
+
+  if (validationResult.success !== true) {
+    const reason = validationResult.reason || "Vendor validation failed";
+    await storeError(invoice_id, reason);
     return { nextState: "BLOCKED" };
   }
 
   if (validationResult.status === "BLOCKED") {
+    const reason = validationResult.reason || "Vendor explicitly blocked";
+    await storeError(invoice_id, reason);
     return { nextState: "BLOCKED" };
   }
 
   if (validationResult.status === "REVIEW_REQUIRED") {
-    return { nextState: "BLOCKED" };
+    const reason = validationResult.reason || "Vendor requires review";
+    await storeError(invoice_id, reason);
+    return { nextState: "RISK_REVIEW" };
   }
 
-  return {
-    nextState: "VALIDATING"
-  };
+  return { nextState: "VALIDATING" };
+}
+
+async function storeError(invoice_id, reason) {
+  console.log("Vendor Failed Reason:", reason);
+
+  await pool.query(
+    `
+      UPDATE invoice_state_machine
+      SET error_reason = $1,
+          last_updated = NOW()
+      WHERE invoice_id = $2
+    `,
+    [reason, invoice_id]
+  );
 }

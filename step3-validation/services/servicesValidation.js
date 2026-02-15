@@ -25,9 +25,28 @@ async function validateVendor(invoiceId) {
 
   const extracted = extractedResult.rows[0].data;
 
-  const supplierName = extracted.supplier_name?.trim().toUpperCase();
-  const taxId = extracted.tax_id?.trim();
-  const bankAccount = extracted.bank_account?.trim();
+  const rawText = extracted.text || "";
+
+  // --- Extract values from raw text ---
+  const supplierMatch = rawText.match(/Vendor Details:\s*(.+)/i);
+  const gstMatch = rawText.match(/GSTIN:\s*([A-Z0-9]+)/i);
+  const bankMatch = rawText.match(/Bank Account:\s*([0-9]+)/i);
+
+  const supplierName = supplierMatch?.[1]?.trim().toUpperCase() || null;
+  const taxId = gstMatch?.[1]?.trim() || null;
+  const bankAccount = bankMatch?.[1]?.trim() || null;
+
+  console.log("Parsed Supplier:", supplierName);
+  console.log("Parsed GST:", taxId);
+  console.log("Parsed Bank:", bankAccount);
+
+  if (!taxId) {
+    return {
+      success: false,
+      status: "REVIEW_REQUIRED",
+      reason: "GST not found in invoice"
+    };
+  }
 
   const vendorResult = await db.query(
     "SELECT * FROM vendor_master WHERE tax_id = $1",
