@@ -95,9 +95,18 @@ async function storeResult(
 ) {
   await db.query(
     `INSERT INTO invoice_po_matching_results
-    (invoice_id, po_number, matching_status,
-     missing_po_flag, price_variance_flag, missing_receipt_flag, matched_at)
-     VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
+     (invoice_id, po_number, matching_status,
+      missing_po_flag, price_variance_flag, missing_receipt_flag, matched_at)
+     VALUES ($1,$2,$3,$4,$5,$6,NOW())
+     ON CONFLICT (invoice_id)
+     DO UPDATE SET
+       po_number = EXCLUDED.po_number,
+       matching_status = EXCLUDED.matching_status,
+       missing_po_flag = EXCLUDED.missing_po_flag,
+       price_variance_flag = EXCLUDED.price_variance_flag,
+       missing_receipt_flag = EXCLUDED.missing_receipt_flag,
+       matched_at = NOW()
+    `,
     [
       invoiceId,
       poNumber,

@@ -18,10 +18,14 @@ redis.on("error", (err) => {
 
 const STATE_TRANSITIONS = {
   RECEIVED: ["STRUCTURED", "BLOCKED"],
-  STRUCTURED: ["VALIDATING", "BLOCKED","RISK_REVIEW"],
+  STRUCTURED: ["VALIDATING", "BLOCKED"],
   VALIDATING: ["MATCHING", "BLOCKED"],
-  MATCHING: ["RISK_REVIEW", "BLOCKED"],
-  RISK_REVIEW: ["PENDING_APPROVAL", "BLOCKED"],
+  MATCHING: [
+    "PENDING_APPROVAL",
+    "WAITING_INFO",
+    "EXCEPTION_REVIEW",
+    "BLOCKED"
+  ],
   PENDING_APPROVAL: ["APPROVED", "BLOCKED"],
   APPROVED: ["PAYMENT_READY"],
   PAYMENT_READY: ["COMPLETED"]
@@ -39,10 +43,7 @@ function resolveWorker(state) {
       return MatchingWorker;
 
     case "MATCHING":
-      return FinancialControlWorker;
-
-    case "RISK_REVIEW":
-      return ApprovalWorker;
+      return FinancialControlWorker; // LLM runs here
 
     case "PENDING_APPROVAL":
       return ApprovalWorker;

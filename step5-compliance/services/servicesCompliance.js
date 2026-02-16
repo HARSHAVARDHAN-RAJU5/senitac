@@ -5,8 +5,9 @@ import { finalDecision } from "./decisionServices.js";
 
 export const runCompliance = async (invoice_id) => {
 
+  // 1️⃣ Fetch extracted invoice data
   const invoiceRes = await db.query(
-    "SELECT * FROM invoice_extracted_data WHERE invoice_id = $1",
+    "SELECT data FROM invoice_extracted_data WHERE invoice_id = $1",
     [invoice_id]
   );
 
@@ -54,10 +55,23 @@ export const runCompliance = async (invoice_id) => {
   const overall = finalDecision(taxResult, policyResult);
 
   await db.query(
-    `INSERT INTO invoice_compliance_results
-     (invoice_id, tax_compliance_status, policy_compliance_status, overall_compliance_status)
-     VALUES ($1, $2, $3, $4)`,
-    [invoice_id, taxResult.status, policyResult.status, overall]
+    `
+    INSERT INTO invoice_compliance_results
+    (invoice_id, tax_compliance_status, policy_compliance_status, overall_compliance_status, evaluated_at)
+    VALUES ($1, $2, $3, $4, NOW())
+    ON CONFLICT (invoice_id)
+    DO UPDATE SET
+      tax_compliance_status = EXCLUDED.tax_compliance_status,
+      policy_compliance_status = EXCLUDED.policy_compliance_status,
+      overall_compliance_status = EXCLUDED.overall_compliance_status,
+      evaluated_at = NOW()
+    `,
+    [
+      invoice_id,
+      taxResult.status,
+      policyResult.status,
+      overall
+    ]
   );
 
   return {
