@@ -1,4 +1,5 @@
 import pool from "../db.js";
+import crypto from "crypto";
 
 async function callLLM(prompt) {
   const res = await fetch("http://127.0.0.1:11434/api/generate", {
@@ -26,6 +27,7 @@ async function callLLM(prompt) {
 }
 
 export async function execute(invoice_id) {
+
   const stateCheck = await pool.query(
     `SELECT current_state FROM invoice_state_machine WHERE invoice_id = $1`,
     [invoice_id]
@@ -35,12 +37,9 @@ export async function execute(invoice_id) {
     throw new Error("State record not found");
   }
 
-  const currentState = stateCheck.rows[0].current_state;
-
-  if (currentState !== "MATCHING") {
+  if (stateCheck.rows[0].current_state !== "MATCHING") {
     throw new Error("Invalid state for FinancialControlWorker");
   }
-
 
   const invoiceData = await pool.query(
     `SELECT data FROM invoice_extracted_data WHERE invoice_id = $1`,
@@ -62,26 +61,72 @@ export async function execute(invoice_id) {
     [invoice_id]
   );
 
-  if (!invoiceData.rows.length) {
+  if (!invoiceData.rows.length || !complianceData.rows.length) {
     return { nextState: "BLOCKED" };
   }
 
-  if (!complianceData.rows.length) {
-    console.error("Missing compliance result");
+  if (complianceData.rows[0].overall_compliance_status === "BLOCKED") {
     return { nextState: "BLOCKED" };
   }
 
-  const complianceStatus =
-    complianceData.rows[0].overall_compliance_status;
+  // ===================================================
+  // 🔴 DETERMINISTIC BANK FRAUD CHECK
+  // ===================================================
 
-  if (complianceStatus === "BLOCKED") {
-    return { nextState: "BLOCKED" };
+  if (validationData.rows.length) {
+
+    const bankStatus = validationData.rows[0].bank_status;
+
+    if (bankStatus === "MISMATCH") {
+
+      const deadline = new Date();
+      deadline.setDate(deadline.getDate() + 3);
+
+      const token = crypto.randomBytes(32).toString("hex");
+
+      const expiry = new Date();
+      expiry.setHours(expiry.getHours() + 24);
+
+      await pool.query(
+        `
+        UPDATE invoice_state_machine
+        SET waiting_reason = $1,
+            waiting_since = NOW(),
+            waiting_deadline = $2,
+            verification_token = $3,
+            token_expiry = $4
+        WHERE invoice_id = $5
+        `,
+        [
+          "BANK_VERIFICATION_REQUIRED",
+          deadline,
+          token,
+          expiry,
+          invoice_id
+        ]
+      );
+
+      await pool.query(
+        `
+        INSERT INTO audit_event_log
+        (invoice_id, event_type, severity, description)
+        VALUES ($1,$2,$3,$4)
+        `,
+        [
+          invoice_id,
+          "BANK_ACCOUNT_MISMATCH",
+          "HIGH",
+          "Invoice bank account differs from vendor master. Verification token generated."
+        ]
+      );
+
+      return { nextState: "WAITING_INFO" };
+    }
   }
 
-  if (complianceStatus === "BLOCKED") {
-    return { nextState: "BLOCKED" };
-  }
-
+  // ===================================================
+  // 🤖 LLM RISK ANALYSIS
+  // ===================================================
 
   const riskPayload = {
     invoice: invoiceData.rows[0].data,
@@ -112,10 +157,7 @@ Return format:
     const raw = await callLLM(prompt);
     llmResult = JSON.parse(raw);
 
-    if (
-      !llmResult.risk_level ||
-      !llmResult.recommended_action
-    ) {
+    if (!llmResult.risk_level || !llmResult.recommended_action) {
       throw new Error("Incomplete LLM response");
     }
 
@@ -151,7 +193,6 @@ Return format:
       llmResult.recommended_action
     ]
   );
-  console.log("LLM RESULT:", llmResult);
 
   switch (llmResult.recommended_action) {
     case "APPROVE":

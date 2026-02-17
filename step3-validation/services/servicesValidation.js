@@ -29,7 +29,6 @@ async function validateVendor(invoiceId) {
   let taxId = null;
   let bankAccount = null;
 
-  // 🔹 1️⃣ Structured JSON mode (preferred)
   if (extracted.supplier_name || extracted.vendor_name || extracted.tax_id) {
 
     supplierName =
@@ -52,7 +51,6 @@ async function validateVendor(invoiceId) {
 
   } else {
 
-    // 🔹 2️⃣ Raw text mode (fallback)
     const rawText = extracted.text || "";
 
     const supplierMatch = rawText.match(/Vendor Details:\s*(.+)/i);
@@ -63,10 +61,6 @@ async function validateVendor(invoiceId) {
     taxId = gstMatch?.[1]?.trim() || null;
     bankAccount = bankMatch?.[1]?.trim() || null;
   }
-
-  console.log("Parsed Supplier:", supplierName);
-  console.log("Parsed GST:", taxId);
-  console.log("Parsed Bank:", bankAccount);
 
   if (!taxId) {
     return {
@@ -107,9 +101,10 @@ async function validateVendor(invoiceId) {
     bankStatus = "MISMATCH";
   }
 
+  // 🔹 ONLY tax mismatch blocks
   let overallStatus = "VALID";
 
-  if (taxStatus === "MISMATCH" || bankStatus === "MISMATCH") {
+  if (taxStatus === "MISMATCH") {
     overallStatus = "BLOCKED";
   } else if (legalStatus === "MISMATCH") {
     overallStatus = "REVIEW_REQUIRED";

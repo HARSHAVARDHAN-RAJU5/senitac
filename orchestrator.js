@@ -64,7 +64,7 @@ async function processInvoice(invoice_id) {
   while (true) {
 
     const stateRes = await pool.query(
-      `SELECT current_state, retry_count
+      `SELECT current_state, retry_count, waiting_reason
        FROM invoice_state_machine
        WHERE invoice_id = $1`,
       [invoice_id]
@@ -75,12 +75,24 @@ async function processInvoice(invoice_id) {
       return;
     }
 
-    const { current_state, retry_count } = stateRes.rows[0];
+    const { current_state, retry_count, waiting_reason } = stateRes.rows[0];
 
     console.log("Current State:", current_state);
 
-    if (current_state === "COMPLETED" || current_state === "BLOCKED") {
-      console.log("Invoice finished:", current_state);
+    // Stop loop on terminal states
+    if (
+      current_state === "COMPLETED" ||
+      current_state === "BLOCKED" ||
+      current_state === "WAITING_INFO" ||
+      current_state === "EXCEPTION_REVIEW"
+    ) {
+      console.log("Processing paused at:", current_state);
+
+      // If WAITING_INFO → trigger notification once
+      if (current_state === "WAITING_INFO") {
+        await NotificationWorker.execute(invoice_id);
+      }
+
       return;
     }
 
@@ -94,9 +106,13 @@ async function processInvoice(invoice_id) {
         [invoice_id]
       );
 
-      await logAudit(invoice_id, current_state, "BLOCKED", "RETRY_LIMIT_EXCEEDED");
+      await logAudit(
+        invoice_id,
+        current_state,
+        "BLOCKED",
+        "RETRY_LIMIT_EXCEEDED"
+      );
 
-      console.log("Retry limit exceeded → BLOCKED");
       return;
     }
 
@@ -122,42 +138,12 @@ async function processInvoice(invoice_id) {
           `Illegal transition from ${current_state} to ${result.nextState}`
         );
       }
-      
-      if (result.nextState === "WAITING_INFO") {
 
-        await pool.query(
-          `UPDATE invoice_state_machine
-           SET current_state = $1,
-               retry_count = 0,
-               waiting_since = NOW(),
-               waiting_deadline = NOW() + INTERVAL '10 days',
-               waiting_reason = $2,
-               last_updated = NOW()
-           WHERE invoice_id = $3`,
-          [result.nextState, result.reason || "MISSING_INFO", invoice_id]
-        );
-
-        await logAudit(
-          invoice_id,
-          current_state,
-          "WAITING_INFO",
-          result.reason
-        );
-
-        console.log("Moved to WAITING_INFO");
-
-        await NotificationWorker.execute(invoice_id, result.reason);
-
-        return; // pause until Redis event resumes
-      }
-
+      // Normal state update
       await pool.query(
         `UPDATE invoice_state_machine
          SET current_state = $1,
              retry_count = 0,
-             waiting_since = NULL,
-             waiting_deadline = NULL,
-             waiting_reason = NULL,
              last_updated = NOW()
          WHERE invoice_id = $2`,
         [result.nextState, invoice_id]
@@ -194,6 +180,7 @@ async function listen() {
   console.log("Orchestrator connected to Redis & Postgres");
 
   while (true) {
+
     try {
 
       const response = await redis.xReadGroup(
