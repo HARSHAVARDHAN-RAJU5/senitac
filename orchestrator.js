@@ -3,9 +3,9 @@ import pool from "./db.js";
 import dotenv from "dotenv";
 dotenv.config();
 
-import SupervisorAgent from "./agents/SupervisorAgent.js";
+import SupervisorAgent from "./agent/SupervisorAgent.js";
 import * as NotificationWorker from "./workers/NotificationWorker.js";
-import * as InternalNotificationWorker from "./workers/InternalNotificationWorker.js";
+import * as InternalNotificationWorker from "./workers/NotificationWorker.js";
 
 const redis = createClient({
   url: "redis://127.0.0.1:6379"

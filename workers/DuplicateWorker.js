@@ -1,4 +1,4 @@
-import BaseAgent from "./BaseAgent.js";
+import BaseAgent from "../agent/BaseAgent.js";
 import * as DuplicateWorker from "../workers/DuplicateWorker.js";
 
 export default class DuplicateAgent extends BaseAgent {
