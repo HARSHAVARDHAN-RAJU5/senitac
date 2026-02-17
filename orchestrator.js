@@ -2,6 +2,7 @@ import { createClient } from "redis";
 import pool from "./db.js";
 
 import * as IntakeExtractionWorker from "./workers/IntakeExtractionWorker.js";
+import * as DuplicateWorker from "./workers/DuplicateWorker.js";
 import * as ValidationWorker from "./workers/ValidationWorker.js";
 import * as MatchingWorker from "./workers/MatchingWorker.js";
 import * as FinancialControlWorker from "./workers/FinancialControlWorker.js";
@@ -18,7 +19,8 @@ redis.on("error", (err) => {
 
 const STATE_TRANSITIONS = {
   RECEIVED: ["STRUCTURED", "BLOCKED"],
-  STRUCTURED: ["VALIDATING", "BLOCKED"],
+  STRUCTURED: ["DUPLICATE_CHECK", "BLOCKED"],
+  DUPLICATE_CHECK: ["VALIDATING", "BLOCKED"],
   VALIDATING: ["MATCHING", "BLOCKED"],
   MATCHING: [
     "PENDING_APPROVAL",
@@ -33,17 +35,21 @@ const STATE_TRANSITIONS = {
 
 function resolveWorker(state) {
   switch (state) {
+
     case "RECEIVED":
       return IntakeExtractionWorker;
 
     case "STRUCTURED":
+      return DuplicateWorker;
+
+    case "DUPLICATE_CHECK":
       return ValidationWorker;
 
     case "VALIDATING":
       return MatchingWorker;
 
     case "MATCHING":
-      return FinancialControlWorker; // LLM runs here
+      return FinancialControlWorker;
 
     case "PENDING_APPROVAL":
       return ApprovalWorker;
@@ -61,6 +67,7 @@ function resolveWorker(state) {
 
 async function processInvoice(invoice_id) {
   while (true) {
+
     const stateRes = await pool.query(
       "SELECT current_state, retry_count FROM invoice_state_machine WHERE invoice_id = $1",
       [invoice_id]
@@ -177,6 +184,7 @@ async function listen() {
     }
   }
 }
+
 async function start() {
   await redis.connect();
   await listen();

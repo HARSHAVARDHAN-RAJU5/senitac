@@ -23,18 +23,46 @@ async function validateVendor(invoiceId) {
     };
   }
 
-  const extracted = extractedResult.rows[0].data;
+  const extracted = extractedResult.rows[0].data || {};
 
-  const rawText = extracted.text || "";
+  let supplierName = null;
+  let taxId = null;
+  let bankAccount = null;
 
-  // --- Extract values from raw text ---
-  const supplierMatch = rawText.match(/Vendor Details:\s*(.+)/i);
-  const gstMatch = rawText.match(/GSTIN:\s*([A-Z0-9]+)/i);
-  const bankMatch = rawText.match(/Bank Account:\s*([0-9]+)/i);
+  // 🔹 1️⃣ Structured JSON mode (preferred)
+  if (extracted.supplier_name || extracted.vendor_name || extracted.tax_id) {
 
-  const supplierName = supplierMatch?.[1]?.trim().toUpperCase() || null;
-  const taxId = gstMatch?.[1]?.trim() || null;
-  const bankAccount = bankMatch?.[1]?.trim() || null;
+    supplierName =
+      extracted.supplier_name ||
+      extracted.vendor_name ||
+      null;
+
+    taxId =
+      extracted.tax_id ||
+      extracted.supplier_gst ||
+      null;
+
+    bankAccount =
+      extracted.bank_account ||
+      null;
+
+    if (supplierName) supplierName = supplierName.trim().toUpperCase();
+    if (taxId) taxId = taxId.trim();
+    if (bankAccount) bankAccount = bankAccount.trim();
+
+  } else {
+
+    // 🔹 2️⃣ Raw text mode (fallback)
+    const rawText = extracted.text || "";
+
+    const supplierMatch = rawText.match(/Vendor Details:\s*(.+)/i);
+    const gstMatch = rawText.match(/GSTIN:\s*([A-Z0-9]+)/i);
+    const bankMatch = rawText.match(/Bank Account:\s*([0-9]+)/i);
+
+    supplierName = supplierMatch?.[1]?.trim().toUpperCase() || null;
+    taxId = gstMatch?.[1]?.trim() || null;
+    bankAccount = bankMatch?.[1]?.trim() || null;
+  }
 
   console.log("Parsed Supplier:", supplierName);
   console.log("Parsed GST:", taxId);
@@ -75,7 +103,7 @@ async function validateVendor(invoiceId) {
     taxStatus = "MISMATCH";
   }
 
-  if (vendor.bank_account !== bankAccount) {
+  if (bankAccount && vendor.bank_account !== bankAccount) {
     bankStatus = "MISMATCH";
   }
 
@@ -90,7 +118,13 @@ async function validateVendor(invoiceId) {
   await db.query(
     `INSERT INTO invoice_validation_results 
     (invoice_id, vendor_id, legal_status, tax_status, bank_status, overall_status, validated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
+    VALUES ($1,$2,$3,$4,$5,$6,NOW())
+    ON CONFLICT (invoice_id) DO UPDATE SET
+      legal_status = EXCLUDED.legal_status,
+      tax_status = EXCLUDED.tax_status,
+      bank_status = EXCLUDED.bank_status,
+      overall_status = EXCLUDED.overall_status,
+      validated_at = NOW()`,
     [
       invoiceId,
       vendor.vendor_id,

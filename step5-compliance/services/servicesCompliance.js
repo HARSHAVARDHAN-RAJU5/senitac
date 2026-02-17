@@ -5,7 +5,6 @@ import { finalDecision } from "./decisionServices.js";
 
 export const runCompliance = async (invoice_id) => {
 
-  // 1️⃣ Fetch extracted invoice data
   const invoiceRes = await db.query(
     "SELECT data FROM invoice_extracted_data WHERE invoice_id = $1",
     [invoice_id]
@@ -19,7 +18,7 @@ export const runCompliance = async (invoice_id) => {
     };
   }
 
-  const invoice = invoiceRes.rows[0];
+  const invoice = invoiceRes.rows[0].data;
 
   const step3Res = await db.query(
     "SELECT overall_status FROM invoice_validation_results WHERE invoice_id = $1",

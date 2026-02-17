@@ -10,7 +10,12 @@ export const evaluatePolicy = (invoice, poResult) => {
     return { status: "CONDITIONAL", reason: "Price variance exceeded" };
   }
 
-  if (invoice.data.invoice_total > policyRules.approvalThreshold) {
+  const total =
+    invoice.invoice_total ||
+    invoice.invoice_amount ||
+    0;
+
+  if (total > policyRules.approvalThreshold){
     return { status: "CONDITIONAL", reason: "High value invoice" };
   }
 
