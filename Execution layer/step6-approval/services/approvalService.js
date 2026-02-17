@@ -1,4 +1,4 @@
-import db from "../../db.js";
+import db from "../../../db.js";
 import { determineApprovalLevel } from "./approvalRules.js";
 
 export async function runApproval(invoice_id) {

@@ -1,5 +1,5 @@
 import fs from "fs";
-import pool from "../../db.js";
+import pool from "../../../db.js";
 import Tesseract from "tesseract.js";
 import { createRequire } from "module";
 

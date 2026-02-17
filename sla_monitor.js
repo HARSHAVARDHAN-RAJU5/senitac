@@ -1,37 +1,47 @@
 import pool from "./db.js";
+import { createClient } from "redis";
 
-console.log("SLA Monitor started...");
+const redis = createClient({
+  url: "redis://127.0.0.1:6379"
+});
+
+await redis.connect();
+
+console.log("Universal SLA Monitor started...");
 
 setInterval(async () => {
+
   try {
 
     const overdue = await pool.query(
       `
-      SELECT invoice_id
+      SELECT invoice_id, waiting_reason
       FROM invoice_state_machine
       WHERE current_state = 'WAITING_INFO'
-        AND waiting_reason = 'BANK_VERIFICATION_REQUIRED'
         AND waiting_deadline IS NOT NULL
         AND waiting_deadline < NOW()
       `
     );
 
-    if (overdue.rows.length === 0) {
-      return;
-    }
+    if (!overdue.rows.length) return;
 
     for (const row of overdue.rows) {
+
+      const { invoice_id, waiting_reason } = row;
+
       await pool.query(
         `
         UPDATE invoice_state_machine
-        SET current_state = 'EXCEPTION_REVIEW',
+        SET current_state = 'BLOCKED',
             waiting_since = NULL,
             waiting_deadline = NULL,
             waiting_reason = NULL,
+            verification_token = NULL,
+            token_expiry = NULL,
             last_updated = NOW()
         WHERE invoice_id = $1
         `,
-        [row.invoice_id]
+        [invoice_id]
       );
 
       await pool.query(
@@ -41,18 +51,25 @@ setInterval(async () => {
         VALUES ($1,$2,$3,$4)
         `,
         [
-          row.invoice_id,
-          "BANK_VERIFICATION_SLA_EXPIRED",
+          invoice_id,
+          "WAITING_INFO_TIMEOUT",
           "HIGH",
-          "Vendor did not confirm bank change within SLA. Escalated for manual review."
+          `SLA expired (10 days) for reason: ${waiting_reason}. Invoice blocked.`
         ]
       );
 
-      console.log("Escalated due to bank verification SLA:", row.invoice_id);
+      // Optional re-emit for final logging / orchestrator awareness
+      await redis.xAdd(
+        "invoice_events",
+        "*",
+        { invoice_id }
+      );
+
+      console.log("Blocked due to SLA expiry:", invoice_id);
     }
 
   } catch (err) {
     console.error("SLA Monitor Error:", err.message);
   }
 
-}, 60000);
+}, 60000); 

@@ -3,14 +3,9 @@ import pool from "./db.js";
 import dotenv from "dotenv";
 dotenv.config();
 
-import * as IntakeExtractionWorker from "./workers/IntakeExtractionWorker.js";
-import * as DuplicateWorker from "./workers/DuplicateWorker.js";
-import * as ValidationWorker from "./workers/ValidationWorker.js";
-import * as MatchingWorker from "./workers/MatchingWorker.js";
-import * as FinancialControlWorker from "./workers/FinancialControlWorker.js";
-import * as ApprovalWorker from "./workers/ApprovalWorker.js";
-import * as PaymentWorker from "./workers/PaymentWorker.js";
+import SupervisorAgent from "./agents/SupervisorAgent.js";
 import * as NotificationWorker from "./workers/NotificationWorker.js";
+import * as InternalNotificationWorker from "./workers/InternalNotificationWorker.js";
 
 const redis = createClient({
   url: "redis://127.0.0.1:6379"
@@ -21,34 +16,21 @@ redis.on("error", (err) => {
 });
 
 const STATE_TRANSITIONS = {
-  RECEIVED: ["STRUCTURED", "BLOCKED"],
+  RECEIVED: ["STRUCTURED","WAITING_INFO","BLOCKED"],
   STRUCTURED: ["DUPLICATE_CHECK", "BLOCKED"],
   DUPLICATE_CHECK: ["VALIDATING", "BLOCKED"],
-  VALIDATING: ["MATCHING", "BLOCKED"],
+  VALIDATING: ["MATCHING", "WAITING_INFO", "BLOCKED"],
   MATCHING: [
     "PENDING_APPROVAL",
     "WAITING_INFO",
     "EXCEPTION_REVIEW",
     "BLOCKED"
   ],
-  PENDING_APPROVAL: ["APPROVED", "BLOCKED"],
-  APPROVED: ["PAYMENT_READY"],
+  EXCEPTION_REVIEW: ["PENDING_APPROVAL", "BLOCKED"],
+  PENDING_APPROVAL: ["APPROVED", "EXCEPTION_REVIEW", "BLOCKED"],
+  APPROVED: ["PAYMENT_READY","EXCEPTION_REVIEW"],
   PAYMENT_READY: ["COMPLETED"]
 };
-
-function resolveWorker(state) {
-  switch (state) {
-    case "RECEIVED": return IntakeExtractionWorker;
-    case "STRUCTURED": return DuplicateWorker;
-    case "DUPLICATE_CHECK": return ValidationWorker;
-    case "VALIDATING": return MatchingWorker;
-    case "MATCHING": return FinancialControlWorker;
-    case "PENDING_APPROVAL": return ApprovalWorker;
-    case "APPROVED": return PaymentWorker;
-    case "PAYMENT_READY": return PaymentWorker;
-    default: return null;
-  }
-}
 
 async function logAudit(invoice_id, old_state, new_state, reason = null) {
   await pool.query(
@@ -61,117 +43,121 @@ async function logAudit(invoice_id, old_state, new_state, reason = null) {
 
 async function processInvoice(invoice_id) {
 
-  while (true) {
+  const stateRes = await pool.query(
+    `SELECT current_state, retry_count
+     FROM invoice_state_machine
+     WHERE invoice_id = $1`,
+    [invoice_id]
+  );
 
-    const stateRes = await pool.query(
-      `SELECT current_state, retry_count, waiting_reason
-       FROM invoice_state_machine
+  if (!stateRes.rows.length) {
+    console.log("State not found:", invoice_id);
+    return;
+  }
+
+  const { current_state, retry_count } = stateRes.rows[0];
+
+  console.log("Current State:", current_state);
+
+  if (
+    current_state === "COMPLETED" ||
+    current_state === "BLOCKED" ||
+    current_state === "WAITING_INFO"
+  ) {
+    console.log("Processing paused at:", current_state);
+    return;
+  }
+
+  if (retry_count >= 3) {
+
+    await pool.query(
+      `UPDATE invoice_state_machine
+       SET current_state = 'BLOCKED',
+           last_updated = NOW()
        WHERE invoice_id = $1`,
       [invoice_id]
     );
 
-    if (!stateRes.rows.length) {
-      console.log("State not found:", invoice_id);
-      return;
+    await logAudit(
+      invoice_id,
+      current_state,
+      "BLOCKED",
+      "RETRY_LIMIT_EXCEEDED"
+    );
+
+    console.log("Retry limit exceeded. Blocking invoice.");
+    return;
+  }
+
+  try {
+
+    const supervisor = new SupervisorAgent(invoice_id);
+    const { decision } = await supervisor.executeStep();
+
+    if (!decision || !decision.nextState) {
+      throw new Error("Invalid decision from Supervisor");
     }
 
-    const { current_state, retry_count, waiting_reason } = stateRes.rows[0];
+    const allowed = STATE_TRANSITIONS[current_state] || [];
 
-    console.log("Current State:", current_state);
+    if (!allowed.includes(decision.nextState)) {
+      throw new Error(
+        `Illegal transition from ${current_state} to ${decision.nextState}`
+      );
+    }
 
-    // Stop loop on terminal states
+    await pool.query(
+      `UPDATE invoice_state_machine
+       SET current_state = $1,
+           retry_count = 0,
+           last_updated = NOW()
+       WHERE invoice_id = $2`,
+      [decision.nextState, invoice_id]
+    );
+
+    await logAudit(
+      invoice_id,
+      current_state,
+      decision.nextState,
+      decision.reason || null
+    );
+
+    console.log("Moved to:", decision.nextState);
+
+
+    if (decision.nextState === "WAITING_INFO") {
+      await NotificationWorker.execute(
+        invoice_id,
+        decision.reason
+      );
+    }
+
+    if (decision.nextState === "EXCEPTION_REVIEW") {
+      await InternalNotificationWorker.execute(
+        invoice_id,
+        decision.reason
+      );
+    }
+
     if (
-      current_state === "COMPLETED" ||
-      current_state === "BLOCKED" ||
-      current_state === "WAITING_INFO" ||
-      current_state === "EXCEPTION_REVIEW"
+      decision.nextState !== "WAITING_INFO" &&
+      decision.nextState !== "BLOCKED" &&
+      decision.nextState !== "COMPLETED"
     ) {
-      console.log("Processing paused at:", current_state);
-
-      // If WAITING_INFO → trigger notification once
-      if (current_state === "WAITING_INFO") {
-        await NotificationWorker.execute(invoice_id);
-      }
-
-      return;
+      await redis.xAdd("invoice_events", "*", { invoice_id });
     }
 
-    if (retry_count >= 3) {
+  } catch (err) {
 
-      await pool.query(
-        `UPDATE invoice_state_machine
-         SET current_state = 'BLOCKED',
-             last_updated = NOW()
-         WHERE invoice_id = $1`,
-        [invoice_id]
-      );
+    console.error("Supervisor failed:", err.message);
 
-      await logAudit(
-        invoice_id,
-        current_state,
-        "BLOCKED",
-        "RETRY_LIMIT_EXCEEDED"
-      );
-
-      return;
-    }
-
-    const Worker = resolveWorker(current_state);
-
-    if (!Worker || !Worker.execute) {
-      console.log("No worker for state:", current_state);
-      return;
-    }
-
-    try {
-
-      const result = await Worker.execute(invoice_id);
-
-      if (!result || !result.nextState) {
-        throw new Error("Worker did not return nextState");
-      }
-
-      const allowed = STATE_TRANSITIONS[current_state] || [];
-
-      if (!allowed.includes(result.nextState)) {
-        throw new Error(
-          `Illegal transition from ${current_state} to ${result.nextState}`
-        );
-      }
-
-      // Normal state update
-      await pool.query(
-        `UPDATE invoice_state_machine
-         SET current_state = $1,
-             retry_count = 0,
-             last_updated = NOW()
-         WHERE invoice_id = $2`,
-        [result.nextState, invoice_id]
-      );
-
-      await logAudit(
-        invoice_id,
-        current_state,
-        result.nextState,
-        result.reason || null
-      );
-
-      console.log("Moved to:", result.nextState);
-
-    } catch (err) {
-
-      console.error("Worker failed:", err.message);
-
-      await pool.query(
-        `UPDATE invoice_state_machine
-         SET retry_count = retry_count + 1,
-             last_updated = NOW()
-         WHERE invoice_id = $1`,
-        [invoice_id]
-      );
-
-      return;
-    }
+    await pool.query(
+      `UPDATE invoice_state_machine
+       SET retry_count = retry_count + 1,
+           last_updated = NOW()
+       WHERE invoice_id = $1`,
+      [invoice_id]
+    );
   }
 }
 
@@ -216,6 +202,7 @@ async function listen() {
     }
   }
 }
+
 
 async function start() {
   await redis.connect();

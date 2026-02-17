@@ -1,14 +1,11 @@
 import pool from "../db.js";
-import matchInvoice from "../step4-matching/services/servicesMatching.js";
-import { runCompliance } from "../step5-compliance/services/servicesCompliance.js";
+import matchInvoice from "../Execution layer/step4-matching/services/servicesMatching.js";
+import { runCompliance } from "../Execution layer/step5-compliance/services/servicesCompliance.js";
 
 export async function execute(invoice_id) {
+
   const stateCheck = await pool.query(
-    `
-      SELECT current_state
-      FROM invoice_state_machine
-      WHERE invoice_id = $1
-    `,
+    `SELECT current_state FROM invoice_state_machine WHERE invoice_id = $1`,
     [invoice_id]
   );
 
@@ -16,40 +13,25 @@ export async function execute(invoice_id) {
     throw new Error("State record not found");
   }
 
-  const currentState = stateCheck.rows[0].current_state;
-
-  if (currentState !== "VALIDATING") {
+  if (stateCheck.rows[0].current_state !== "VALIDATING") {
     throw new Error("Invalid state for MatchingWorker");
   }
 
-const matchingResult = await matchInvoice(invoice_id);
-console.log("Matching Result:", matchingResult);
+  const matchingResult = await matchInvoice(invoice_id);
 
-if (!matchingResult || matchingResult.success !== true) {
-  console.log("Blocked: Matching failed");
-  return { nextState: "BLOCKED" };
-}
+  if (!matchingResult || !matchingResult.success) {
+    return { success: false, outcome: "MATCHING_FAILED" };
+  }
 
-if (matchingResult.status === "MISMATCH") {
-  console.log("Blocked: PO Mismatch");
-  return { nextState: "BLOCKED" };
-}
+  const complianceResult = await runCompliance(invoice_id);
 
-const complianceResult = await runCompliance(invoice_id);
-console.log("Compliance Result:", complianceResult);
-
-if (!complianceResult || complianceResult.success !== true) {
-  console.log("Blocked: Compliance failed");
-  return { nextState: "BLOCKED" };
-}
-
-if (complianceResult.status === "BLOCKED") {
-  console.log("Blocked: Compliance status BLOCKED");
-  return { nextState: "BLOCKED" };
-}
-
+  if (!complianceResult || !complianceResult.success) {
+    return { success: false, outcome: "COMPLIANCE_FAILED" };
+  }
 
   return {
-    nextState: "MATCHING"
+    success: true,
+    matching: matchingResult,
+    compliance: complianceResult
   };
 }

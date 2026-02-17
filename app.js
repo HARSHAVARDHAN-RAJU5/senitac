@@ -1,11 +1,13 @@
 import express from "express";
 
+
 import invoiceIntakeRoutes from "./step1-intake/routes/invoiceIntake.js";
 import invoiceExtractionRoutes from "./step2-extraction/routes/invoiceExtraction.js";
 import invoiceValidationRoutes from "./step3-validation/routes/routesValidation.js";
 import invoiceMatchingRoutes from "./step4-matching/routes/routesMatching.js";
 import invoiceComplianceRoutes from "./step5-compliance/routes/routesCompliance.js";
 import invoiceApprovalRoutes from "./step6-approval/routes/approvalRoutes.js";
+import exceptionReviewRoutes from "./routes/exceptionReviewRoutes.js";
 
 const app = express();
 
@@ -28,6 +30,8 @@ app.use("/api/invoices/compliance", invoiceComplianceRoutes);
 
 // STEP 6 – Approval & Workflow
 app.use("/api/invoices/approval", invoiceApprovalRoutes);
+
+app.use("/api/exception-review", exceptionReviewRoutes);
 
 app.listen(3000, () => {
   console.log("Server running on port 3000");

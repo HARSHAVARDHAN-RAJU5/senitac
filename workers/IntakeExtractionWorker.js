@@ -1,7 +1,8 @@
 import pool from "../db.js";
-import { runExtraction } from "../step2-extraction/services/extractionService.js";
+import { runExtraction } from "../Execution layer/step2-extraction/services/extractionService.js";
 
 export async function execute(invoice_id) {
+
   const stateCheck = await pool.query(
     `
       SELECT current_state
@@ -11,23 +12,42 @@ export async function execute(invoice_id) {
     [invoice_id]
   );
 
-  if (stateCheck.rows.length === 0) {
-    throw new Error("State record not found");
+  if (!stateCheck.rows.length) {
+    return {
+      success: false,
+      outcome: "STATE_NOT_FOUND"
+    };
   }
 
-  const currentState = stateCheck.rows[0].current_state;
-
-  if (currentState !== "RECEIVED") {
-    throw new Error("Invalid state for IntakeExtractionWorker");
+  if (stateCheck.rows[0].current_state !== "RECEIVED") {
+    return {
+      success: false,
+      outcome: "INVALID_STATE"
+    };
   }
 
-  const extractedData = await runExtraction(invoice_id);
+  try {
 
-  if (!extractedData || !extractedData.text) {
-    throw new Error("Extraction failed");
+    const extractedData = await runExtraction(invoice_id);
+
+    if (!extractedData || !extractedData.text) {
+      return {
+        success: false,
+        outcome: "EXTRACTION_FAILED"
+      };
+    }
+
+    return {
+      success: true,
+      outcome: "EXTRACTION_SUCCESS"
+    };
+
+  } catch (err) {
+
+    return {
+      success: false,
+      outcome: "EXTRACTION_ERROR",
+      error: err.message
+    };
   }
-
-  return {
-    nextState: "STRUCTURED"
-  };
 }

@@ -19,31 +19,32 @@ export default class DuplicateAgent extends BaseAgent {
         reason: "Duplicate check failed"
       };
     }
-
+    
     if (observation.outcome === "NO_DUPLICATE") {
       return {
-        nextState: "VALIDATING"
+        nextState: "VALIDATING",
+        reason: "No duplicate detected"
       };
     }
 
     if (observation.outcome === "DUPLICATE_CONFIRMED") {
       return {
         nextState: "BLOCKED",
-        reason: "Duplicate invoice detected"
+        reason: "Duplicate invoice confirmed"
       };
     }
 
     if (observation.outcome === "POTENTIAL_DUPLICATE") {
       return {
         nextState: "EXCEPTION_REVIEW",
-        reason: "Potential duplicate requires review"
+        reason: "Potential duplicate requires manual review"
       };
     }
 
     if (observation.outcome === "DATA_MISSING") {
       return {
         nextState: "BLOCKED",
-        reason: observation.reason
+        reason: observation.reason || "Extraction data missing"
       };
     }
 
