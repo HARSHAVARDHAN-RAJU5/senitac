@@ -1,121 +1,100 @@
 import db from "../../../db.js";
+import policyConfig from "../../step5-compliance/rules/policyRules.js";
 
-async function matchInvoice(invoiceId) {
+export const runMatching = async (invoice_id) => {
 
-  const validation = await db.query(
-    "SELECT overall_status FROM invoice_validation_results WHERE invoice_id = $1",
-    [invoiceId]
+  const validationRes = await db.query(
+    "SELECT overall_status, vendor_id, bank_status FROM invoice_validation_results WHERE invoice_id = $1",
+    [invoice_id]
   );
 
-  if (!validation.rows.length || validation.rows[0].overall_status !== "VALID") {
-    return {
-      success: false,
-      status: "BLOCKED",
-      reason: "Invoice not eligible for PO matching"
-    };
+  if (!validationRes.rows.length || validationRes.rows[0].overall_status !== "VALID") {
+    return { success: false };
   }
 
-  const extractedResult = await db.query(
+  const { vendor_id, bank_status } = validationRes.rows[0];
+
+  const invoiceRes = await db.query(
     "SELECT data FROM invoice_extracted_data WHERE invoice_id = $1",
-    [invoiceId]
+    [invoice_id]
   );
 
-  if (!extractedResult.rows.length) {
-    return {
-      success: false,
-      status: "BLOCKED",
-      reason: "No extracted invoice data found"
-    };
+  if (!invoiceRes.rows.length) return { success: false };
+
+  const invoice = invoiceRes.rows[0].data;
+  const invoiceTotal = parseFloat(invoice.total_amount || 0);
+  const poNumber = invoice.po_number || null;
+
+  const tolerance = policyConfig.matching.priceVarianceTolerance;
+
+  let po = null;
+  let missing_po_flag = false;
+  let price_variance_flag = false;
+  const bank_mismatch_flag = bank_status === "MISMATCH";
+
+  if (poNumber) {
+    const poRes = await db.query(
+      "SELECT * FROM purchase_orders WHERE po_number = $1",
+      [poNumber]
+    );
+    if (poRes.rows.length) po = poRes.rows[0];
   }
 
-  const extracted = extractedResult.rows[0].data;
+  if (!po) {
+    const vendorPOs = await db.query(
+      "SELECT * FROM purchase_orders WHERE vendor_id = $1",
+      [vendor_id]
+    );
 
-  const poNumber = extracted.po_number;
-  const invoiceTotal = extracted.invoice_total;
+    const matches = vendorPOs.rows.filter(p => {
+      const poAmount = parseFloat(p.total_amount || 0);
+      if (!poAmount) return false;
+      const variance = Math.abs(invoiceTotal - poAmount) / poAmount;
+      return variance <= tolerance;
+    });
 
-  if (!poNumber) {
-    await storeResult(invoiceId, null, "MISMATCH", true, false, true);
-
-    return {
-      success: true,
-      status: "MISMATCH",
-      flags: { missing_po: true }
-    };
+    if (matches.length === 1) {
+      po = matches[0];
+    } else {
+      missing_po_flag = true;
+    }
   }
 
-  const poResult = await db.query(
-    "SELECT * FROM purchase_orders WHERE po_number = $1",
-    [poNumber]
-  );
-
-  if (!poResult.rows.length) {
-    await storeResult(invoiceId, poNumber, "MISMATCH", true, false, false);
-
-    return {
-      success: true,
-      status: "MISMATCH",
-      flags: { missing_po: true }
-    };
+  if (po) {
+    const poAmount = parseFloat(po.total_amount || 0);
+    const variance = Math.abs(invoiceTotal - poAmount) / poAmount;
+    if (variance > tolerance) price_variance_flag = true;
   }
 
-  const po = poResult.rows[0];
-
-  const tolerance = 0.02;
-  const variance = Math.abs(invoiceTotal - po.total_amount) / po.total_amount;
-
-  const priceVarianceFlag = variance > tolerance;
-
-  const matchingStatus = priceVarianceFlag ? "PARTIAL_MATCH" : "MATCHED";
-
-  await storeResult(
-    invoiceId,
-    poNumber,
-    matchingStatus,
-    false,
-    priceVarianceFlag,
-    false
+  await db.query(
+    `
+    INSERT INTO invoice_po_matching_results
+    (invoice_id, po_number, matching_status,
+     missing_po_flag, price_variance_flag, matched_at)
+    VALUES ($1,$2,$3,$4,$5,NOW())
+    ON CONFLICT (invoice_id)
+    DO UPDATE SET
+      po_number = EXCLUDED.po_number,
+      matching_status = EXCLUDED.matching_status,
+      missing_po_flag = EXCLUDED.missing_po_flag,
+      price_variance_flag = EXCLUDED.price_variance_flag,
+      matched_at = NOW()
+    `,
+    [
+      invoice_id,
+      po ? po.po_number : null,
+      po ? "MATCHED" : "MISMATCH",
+      missing_po_flag,
+      price_variance_flag
+    ]
   );
 
   return {
     success: true,
-    status: matchingStatus,
-    flags: {
-      price_variance: priceVarianceFlag
+    signals: {
+      missing_po_flag,
+      price_variance_flag,
+      bank_mismatch_flag
     }
   };
-}
-
-async function storeResult(
-  invoiceId,
-  poNumber,
-  status,
-  missingPoFlag,
-  priceVarianceFlag,
-  missingReceiptFlag
-) {
-  await db.query(
-    `INSERT INTO invoice_po_matching_results
-     (invoice_id, po_number, matching_status,
-      missing_po_flag, price_variance_flag, missing_receipt_flag, matched_at)
-     VALUES ($1,$2,$3,$4,$5,$6,NOW())
-     ON CONFLICT (invoice_id)
-     DO UPDATE SET
-       po_number = EXCLUDED.po_number,
-       matching_status = EXCLUDED.matching_status,
-       missing_po_flag = EXCLUDED.missing_po_flag,
-       price_variance_flag = EXCLUDED.price_variance_flag,
-       missing_receipt_flag = EXCLUDED.missing_receipt_flag,
-       matched_at = NOW()
-    `,
-    [
-      invoiceId,
-      poNumber,
-      status,
-      missingPoFlag,
-      priceVarianceFlag,
-      missingReceiptFlag
-    ]
-  );
-}
-
-export default matchInvoice;
+};

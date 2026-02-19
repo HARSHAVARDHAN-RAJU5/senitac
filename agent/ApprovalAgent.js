@@ -12,17 +12,16 @@ export default class ApprovalAgent extends BaseAgent {
   }
 
   async evaluate(observation) {
-
     if (!observation || observation.success !== true) {
       return {
-        nextState: "EXCEPTION_REVIEW",
+        nextState: "BLOCKED",
         reason: "Approval routing failed"
       };
     }
 
     return {
       nextState: "APPROVED",
-      reason: "Auto-approved by system"
+      reason: "Approved by approval workflow"
     };
   }
 }

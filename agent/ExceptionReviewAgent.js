@@ -10,9 +10,12 @@ export default class ExceptionReviewAgent extends BaseAgent {
   async act() {
 
     const res = await pool.query(
-      `SELECT decision, processed
+      `SELECT id, decision
        FROM exception_review_decisions
-       WHERE invoice_id = $1`,
+       WHERE invoice_id = $1
+       AND processed = false
+       ORDER BY decided_at DESC
+       LIMIT 1`,
       [this.invoice_id]
     );
 
@@ -20,31 +23,27 @@ export default class ExceptionReviewAgent extends BaseAgent {
       return { decisionFound: false };
     }
 
-    if (res.rows[0].processed === true) {
-      return { decisionFound: false };
-    }
-
     return {
       decisionFound: true,
-      decision: res.rows[0].decision
+      decision: res.rows[0].decision,
+      decisionId: res.rows[0].id
     };
   }
 
   async evaluate(observation) {
 
     if (!observation.decisionFound) {
-      // Stay in EXCEPTION_REVIEW
       return {
         nextState: "EXCEPTION_REVIEW"
       };
     }
 
-    // Mark as processed
+    // Mark only this decision row as processed
     await pool.query(
       `UPDATE exception_review_decisions
        SET processed = true
-       WHERE invoice_id = $1`,
-      [this.invoice_id]
+       WHERE id = $1`,
+      [observation.decisionId]
     );
 
     if (observation.decision === "APPROVE") {
@@ -63,7 +62,7 @@ export default class ExceptionReviewAgent extends BaseAgent {
 
     return {
       nextState: "EXCEPTION_REVIEW",
-      reason: "Invalid decision state"
+      reason: "Invalid decision value"
     };
   }
 }

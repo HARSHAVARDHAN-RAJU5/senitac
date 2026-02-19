@@ -1,99 +1,108 @@
 import BaseAgent from "./BaseAgent.js";
-import * as FinancialControlWorker from "../workers/FinancialControlWorker.js";
+import * as Worker from "../workers/MatchingWorker.js";
+import axios from "axios";
 
-async function callLLM(prompt) {
-  const res = await fetch("http://127.0.0.1:11434/api/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "llama3",
-      prompt,
-      format: "json",
-      stream: false
-    })
-  });
+function safeParseLLM(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("Invalid LLM JSON:", raw);
+    return null;
+  }
+}
 
-  const data = await res.json();
-  return JSON.parse(data.response);
+function extractJSON(text) {
+  const match = text.match(/\{[\s\S]*\}/);
+  return match ? match[0] : null;
 }
 
 export default class MatchingAgent extends BaseAgent {
 
   async plan() {
-    return { action: "RUN_FINANCIAL_CONTROL" };
+    return { action: "EVALUATE" };
   }
 
   async act() {
-    return await FinancialControlWorker.execute(this.invoice_id);
+    return await Worker.execute(this.invoice_id);
   }
 
   async evaluate(observation) {
 
-    if (!observation || !observation.success) {
-      return { nextState: "BLOCKED", reason: "Worker failure" };
+    if (!observation.success) {
+      return { nextState: "BLOCKED", reason: "Signal collection failed" };
     }
-
-    switch (observation.outcome) {
-
-      case "COMPLIANCE_BLOCKED":
-        return { nextState: "BLOCKED", reason: "Compliance blocked" };
-
-      case "BANK_MISMATCH":
-        return { nextState: "WAITING_INFO", reason: "Bank mismatch" };
-
-      case "PO_EXCEPTION":
-        return { nextState: "EXCEPTION_REVIEW", reason: "PO mismatch or missing" };
-
-      case "READY_FOR_RISK_ANALYSIS":
-        break;
-
-      default:
-        return { nextState: "EXCEPTION_REVIEW", reason: "Unhandled outcome" };
-    }
-
-    // ===============================
-    // LLM Risk Analysis
-    // ===============================
 
     const prompt = `
-You are an Accounts Payable Risk Analyst.
+You are an enterprise AP risk evaluator.
 
-Assess risk of this invoice.
+Signals:
+${JSON.stringify(observation.signals)}
 
-Return JSON:
+Respond ONLY with valid JSON.
+No explanations.
+No markdown.
+No extra text.
+
+Format:
 {
-  "recommended_action": "APPROVE | REQUEST_INFO | ESCALATE | BLOCK",
-  "reasoning": "short explanation"
+  "classification": "VALID" | "REVIEW" | "WAITING_INFO" | "BLOCKED",
+  "reason": "short explanation",
+  "risk_score": 0-100
 }
-
-Data:
-${JSON.stringify(observation.data)}
 `;
 
-    let llm;
+    const response = await axios.post(
+      "http://127.0.0.1:11434/api/generate",
+      {
+        model: "llama3",
+        prompt,
+        stream: false
+      }
+    );
 
-    try {
-      llm = await callLLM(prompt);
-    } catch {
-      return { nextState: "EXCEPTION_REVIEW", reason: "LLM failure" };
+    const raw = response.data.response?.trim();
+
+    console.log("LLM RAW:", raw);
+
+    // Try extracting JSON block safely
+    const jsonBlock = extractJSON(raw);
+
+    if (!jsonBlock) {
+      console.error("No JSON found in LLM output");
+      return {
+        nextState: "BLOCKED",
+        reason: "Invalid LLM output format"
+      };
     }
 
-    switch (llm.recommended_action) {
+    const output = safeParseLLM(jsonBlock);
 
-      case "APPROVE":
-        return { nextState: "PENDING_APPROVAL", reason: llm.reasoning };
+    if (!output || !output.classification) {
+      return {
+        nextState: "BLOCKED",
+        reason: "Malformed LLM JSON"
+      };
+    }
 
-      case "REQUEST_INFO":
-        return { nextState: "WAITING_INFO", reason: llm.reasoning };
+    switch (output.classification) {
 
-      case "ESCALATE":
-        return { nextState: "EXCEPTION_REVIEW", reason: llm.reasoning };
+      case "BLOCKED":
+        return { nextState: "BLOCKED", reason: output.reason };
 
-      case "BLOCK":
-        return { nextState: "BLOCKED", reason: llm.reasoning };
+      case "WAITING_INFO":
+        return { nextState: "WAITING_INFO", reason: output.reason };
+
+      case "REVIEW":
+        return { nextState: "EXCEPTION_REVIEW", reason: output.reason };
+
+      case "VALID":
+        return { nextState: "PENDING_APPROVAL", reason: output.reason };
 
       default:
-        return { nextState: "EXCEPTION_REVIEW", reason: "Invalid LLM output" };
+        return {
+          nextState: "BLOCKED",
+          reason: "Unknown LLM classification"
+        };
     }
   }
 }

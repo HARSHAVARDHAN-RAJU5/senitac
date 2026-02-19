@@ -19,7 +19,7 @@ export async function execute(invoice_id) {
 
   const currentState = stateCheck.rows[0].current_state;
 
-  if (currentState !== "STRUCTURED") {
+  if (currentState !== "VALIDATING") {
     throw new Error("Invalid state for ValidationWorker");
   }
 

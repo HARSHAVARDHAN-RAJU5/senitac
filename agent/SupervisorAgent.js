@@ -30,38 +30,44 @@ export default class SupervisorAgent {
     return res.rows[0].current_state;
   }
 
-  selectAgent(state) {
+selectAgent(state) {
 
-    switch (state) {
+  switch (state) {
 
-      case "RECEIVED":
-        return new IntakeExtractionAgent(this.invoice_id);
+    case "RECEIVED":
+      return new IntakeExtractionAgent(this.invoice_id);
 
-      case "STRUCTURED":
-        return new DuplicateAgent(this.invoice_id);
+    case "STRUCTURED":
+      return {
+        run: async () => ({
+          nextState: "DUPLICATE_CHECK",
+          reason: "Extraction completed"
+        })
+      };
 
-      case "VALIDATING":
-        return new ValidationAgent(this.invoice_id);
+    case "DUPLICATE_CHECK":
+      return new DuplicateAgent(this.invoice_id);
 
-      case "MATCHING":
-        return new MatchingAgent(this.invoice_id);
+    case "VALIDATING":
+      return new ValidationAgent(this.invoice_id);
 
-      case "PENDING_APPROVAL":
-        return new ApprovalAgent(this.invoice_id);
+    case "MATCHING":
+      return new MatchingAgent(this.invoice_id);
 
-      case "APPROVED":
-        return new PaymentAgent(this.invoice_id);
+    case "PENDING_APPROVAL":
+      return new ApprovalAgent(this.invoice_id);
 
-      case "PAYMENT_READY":
-        return new PaymentAgent(this.invoice_id);
+    case "APPROVED":
+    case "PAYMENT_READY":
+      return new PaymentAgent(this.invoice_id);
 
-      case "EXCEPTION_REVIEW":
-        return new ExceptionReviewAgent(this.invoice_id);
+    case "EXCEPTION_REVIEW":
+      return new ExceptionReviewAgent(this.invoice_id);
 
-      default:
-        throw new Error(`No agent mapped for state: ${state}`);
-    }
+    default:
+      throw new Error(`No agent mapped for state: ${state}`);
   }
+}
 
   async executeStep() {
 

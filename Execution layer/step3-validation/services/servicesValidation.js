@@ -1,5 +1,10 @@
 import db from "../../../db.js";
 
+function normalizeCompare(value) {
+  if (!value) return null;
+  return value.trim().toUpperCase();
+}
+
 async function validateVendor(invoiceId) {
 
   const extractedResult = await db.query(
@@ -8,66 +13,30 @@ async function validateVendor(invoiceId) {
   );
 
   if (!extractedResult.rows.length) {
-    return {
-      success: false,
-      status: "BLOCKED",
-      reason: "No extracted data found"
-    };
+    return { success: false, status: "BLOCKED", reason: "No extracted data found" };
   }
 
   if (extractedResult.rows[0].extraction_status !== "SUCCESS") {
-    return {
-      success: false,
-      status: "REVIEW_REQUIRED",
-      reason: "Extraction not successful"
-    };
+    return { success: false, status: "REVIEW_REQUIRED", reason: "Extraction not successful" };
   }
 
   const extracted = extractedResult.rows[0].data || {};
 
-  let supplierName = null;
-  let taxId = null;
-  let bankAccount = null;
+  const supplierName = normalizeCompare(
+    extracted.supplier_name || extracted.vendor_name
+  );
 
-  if (extracted.supplier_name || extracted.vendor_name || extracted.tax_id) {
+  const taxId =
+    extracted.tax_id ||
+    extracted.supplier_gst ||
+    extracted.gstin ||
+    null;
 
-    supplierName =
-      extracted.supplier_name ||
-      extracted.vendor_name ||
-      null;
-
-    taxId =
-      extracted.tax_id ||
-      extracted.supplier_gst ||
-      null;
-
-    bankAccount =
-      extracted.bank_account ||
-      null;
-
-    if (supplierName) supplierName = supplierName.trim().toUpperCase();
-    if (taxId) taxId = taxId.trim();
-    if (bankAccount) bankAccount = bankAccount.trim();
-
-  } else {
-
-    const rawText = extracted.text || "";
-
-    const supplierMatch = rawText.match(/Vendor Details:\s*(.+)/i);
-    const gstMatch = rawText.match(/GSTIN:\s*([A-Z0-9]+)/i);
-    const bankMatch = rawText.match(/Bank Account:\s*([0-9]+)/i);
-
-    supplierName = supplierMatch?.[1]?.trim().toUpperCase() || null;
-    taxId = gstMatch?.[1]?.trim() || null;
-    bankAccount = bankMatch?.[1]?.trim() || null;
-  }
+  const bankAccount =
+    extracted.bank_account || null;
 
   if (!taxId) {
-    return {
-      success: false,
-      status: "REVIEW_REQUIRED",
-      reason: "GST not found in invoice"
-    };
+    return { success: false, status: "REVIEW_REQUIRED", reason: "GST not found in invoice" };
   }
 
   const vendorResult = await db.query(
@@ -76,11 +45,7 @@ async function validateVendor(invoiceId) {
   );
 
   if (!vendorResult.rows.length) {
-    return {
-      success: false,
-      status: "REVIEW_REQUIRED",
-      reason: "Vendor not found"
-    };
+    return { success: false, status: "REVIEW_REQUIRED", reason: "Vendor not found" };
   }
 
   const vendor = vendorResult.rows[0];
@@ -89,7 +54,10 @@ async function validateVendor(invoiceId) {
   let taxStatus = "MATCH";
   let bankStatus = "MATCH";
 
-  if (vendor.legal_name.toUpperCase() !== supplierName) {
+  if (
+    supplierName &&
+    normalizeCompare(vendor.legal_name) !== supplierName
+  ) {
     legalStatus = "MISMATCH";
   }
 
@@ -97,11 +65,13 @@ async function validateVendor(invoiceId) {
     taxStatus = "MISMATCH";
   }
 
-  if (bankAccount && vendor.bank_account !== bankAccount) {
+  if (
+    bankAccount &&
+    vendor.bank_account !== bankAccount
+  ) {
     bankStatus = "MISMATCH";
   }
 
-  // 🔹 ONLY tax mismatch blocks
   let overallStatus = "VALID";
 
   if (taxStatus === "MISMATCH") {
@@ -112,14 +82,14 @@ async function validateVendor(invoiceId) {
 
   await db.query(
     `INSERT INTO invoice_validation_results 
-    (invoice_id, vendor_id, legal_status, tax_status, bank_status, overall_status, validated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,NOW())
-    ON CONFLICT (invoice_id) DO UPDATE SET
-      legal_status = EXCLUDED.legal_status,
-      tax_status = EXCLUDED.tax_status,
-      bank_status = EXCLUDED.bank_status,
-      overall_status = EXCLUDED.overall_status,
-      validated_at = NOW()`,
+     (invoice_id, vendor_id, legal_status, tax_status, bank_status, overall_status, validated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,NOW())
+     ON CONFLICT (invoice_id) DO UPDATE SET
+       legal_status = EXCLUDED.legal_status,
+       tax_status = EXCLUDED.tax_status,
+       bank_status = EXCLUDED.bank_status,
+       overall_status = EXCLUDED.overall_status,
+       validated_at = NOW()`,
     [
       invoiceId,
       vendor.vendor_id,
@@ -133,9 +103,7 @@ async function validateVendor(invoiceId) {
   return {
     success: true,
     status: overallStatus,
-    data: {
-      vendor_id: vendor.vendor_id
-    }
+    data: { vendor_id: vendor.vendor_id }
   };
 }
 

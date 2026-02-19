@@ -5,7 +5,6 @@ dotenv.config();
 
 import SupervisorAgent from "./agent/SupervisorAgent.js";
 import * as NotificationWorker from "./workers/NotificationWorker.js";
-import * as InternalNotificationWorker from "./workers/NotificationWorker.js";
 
 const redis = createClient({
   url: "redis://127.0.0.1:6379"
@@ -16,7 +15,7 @@ redis.on("error", (err) => {
 });
 
 const STATE_TRANSITIONS = {
-  RECEIVED: ["STRUCTURED","WAITING_INFO","BLOCKED"],
+  RECEIVED: ["STRUCTURED", "WAITING_INFO", "BLOCKED"],
   STRUCTURED: ["DUPLICATE_CHECK", "BLOCKED"],
   DUPLICATE_CHECK: ["VALIDATING", "BLOCKED"],
   VALIDATING: ["MATCHING", "WAITING_INFO", "BLOCKED"],
@@ -26,9 +25,10 @@ const STATE_TRANSITIONS = {
     "EXCEPTION_REVIEW",
     "BLOCKED"
   ],
-  EXCEPTION_REVIEW: ["PENDING_APPROVAL", "BLOCKED"],
-  PENDING_APPROVAL: ["APPROVED", "EXCEPTION_REVIEW", "BLOCKED"],
-  APPROVED: ["PAYMENT_READY","EXCEPTION_REVIEW"],
+  WAITING_INFO: ["RECEIVED"],
+  EXCEPTION_REVIEW: ["EXCEPTION_REVIEW", "PENDING_APPROVAL", "BLOCKED"],
+  PENDING_APPROVAL: ["APPROVED", "BLOCKED"],
+  APPROVED: ["PAYMENT_READY"],
   PAYMENT_READY: ["COMPLETED"]
 };
 
@@ -56,9 +56,9 @@ async function processInvoice(invoice_id) {
   }
 
   const { current_state, retry_count } = stateRes.rows[0];
-
   console.log("Current State:", current_state);
 
+  // Terminal pause states
   if (
     current_state === "COMPLETED" ||
     current_state === "BLOCKED" ||
@@ -68,8 +68,8 @@ async function processInvoice(invoice_id) {
     return;
   }
 
+  // Retry guard
   if (retry_count >= 3) {
-
     await pool.query(
       `UPDATE invoice_state_machine
        SET current_state = 'BLOCKED',
@@ -92,10 +92,24 @@ async function processInvoice(invoice_id) {
   try {
 
     const supervisor = new SupervisorAgent(invoice_id);
-    const { decision } = await supervisor.executeStep();
+    const result = await supervisor.executeStep();
 
-    if (!decision || !decision.nextState) {
-      throw new Error("Invalid decision from Supervisor");
+    if (!result || !result.decision) {
+      console.log("No decision returned. Staying in:", current_state);
+      return;
+    }
+
+    const decision = result.decision;
+
+    if (!decision.nextState) {
+      console.log("No nextState provided. Staying in:", current_state);
+      return;
+    }
+
+    // Prevent infinite self-loop re-emission
+    if (decision.nextState === current_state) {
+      console.log("No state change. Staying in:", current_state);
+      return;
     }
 
     const allowed = STATE_TRANSITIONS[current_state] || [];
@@ -124,7 +138,7 @@ async function processInvoice(invoice_id) {
 
     console.log("Moved to:", decision.nextState);
 
-
+    // Send notification if WAITING_INFO
     if (decision.nextState === "WAITING_INFO") {
       await NotificationWorker.execute(
         invoice_id,
@@ -132,13 +146,7 @@ async function processInvoice(invoice_id) {
       );
     }
 
-    if (decision.nextState === "EXCEPTION_REVIEW") {
-      await InternalNotificationWorker.execute(
-        invoice_id,
-        decision.reason
-      );
-    }
-
+    // Only emit if real forward movement and not terminal
     if (
       decision.nextState !== "WAITING_INFO" &&
       decision.nextState !== "BLOCKED" &&
@@ -202,7 +210,6 @@ async function listen() {
     }
   }
 }
-
 
 async function start() {
   await redis.connect();

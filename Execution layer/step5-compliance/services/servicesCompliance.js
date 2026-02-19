@@ -1,7 +1,6 @@
 import db from "../../../db.js";
 import { evaluateTax } from "./taxEngineCompliance.js";
-import { evaluatePolicy } from "./policyEngineCompliance.js";
-import { finalDecision } from "./decisionServices.js";
+import policyConfig from "../rules/policyRules.js";
 
 export const runCompliance = async (invoice_id) => {
 
@@ -10,73 +9,30 @@ export const runCompliance = async (invoice_id) => {
     [invoice_id]
   );
 
-  if (!invoiceRes.rows.length) {
-    return {
-      success: false,
-      status: "BLOCKED",
-      reason: "Invoice not found"
-    };
-  }
+  if (!invoiceRes.rows.length) return { success: false };
 
   const invoice = invoiceRes.rows[0].data;
 
-  const step3Res = await db.query(
-    "SELECT overall_status FROM invoice_validation_results WHERE invoice_id = $1",
-    [invoice_id]
-  );
-
-  if (!step3Res.rows.length || step3Res.rows[0].overall_status !== "VALID") {
-    return {
-      success: false,
-      status: "BLOCKED",
-      reason: "Invoice not eligible for compliance"
-    };
-  }
-
-  const poRes = await db.query(
+  const matchingRes = await db.query(
     "SELECT * FROM invoice_po_matching_results WHERE invoice_id = $1",
     [invoice_id]
   );
 
-  if (!poRes.rows.length) {
-    return {
-      success: false,
-      status: "BLOCKED",
-      reason: "PO matching result not found"
-    };
-  }
+  if (!matchingRes.rows.length) return { success: false };
 
-  const poResult = poRes.rows[0];
+  const poResult = matchingRes.rows[0];
 
   const taxResult = await evaluateTax(invoice);
-  const policyResult = evaluatePolicy(invoice, poResult);
-
-  const overall = finalDecision(taxResult, policyResult);
-
-  await db.query(
-    `
-    INSERT INTO invoice_compliance_results
-    (invoice_id, tax_compliance_status, policy_compliance_status, overall_compliance_status, evaluated_at)
-    VALUES ($1, $2, $3, $4, NOW())
-    ON CONFLICT (invoice_id)
-    DO UPDATE SET
-      tax_compliance_status = EXCLUDED.tax_compliance_status,
-      policy_compliance_status = EXCLUDED.policy_compliance_status,
-      overall_compliance_status = EXCLUDED.overall_compliance_status,
-      evaluated_at = NOW()
-    `,
-    [
-      invoice_id,
-      taxResult.status,
-      policyResult.status,
-      overall
-    ]
-  );
 
   return {
     success: true,
-    status: overall,
-    tax_status: taxResult.status,
-    policy_status: policyResult.status
+    signals: {
+      missing_po_flag: poResult.missing_po_flag,
+      price_variance_flag: poResult.price_variance_flag,
+      tax_status: taxResult.status,
+      high_value_flag:
+        parseFloat(invoice.total_amount || 0) >
+        policyConfig.approval.highValueThreshold
+    }
   };
 };

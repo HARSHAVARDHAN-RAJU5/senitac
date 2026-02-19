@@ -11,44 +11,47 @@ export default class IntakeExtractionAgent extends BaseAgent {
     return await IntakeExtractionWorker.execute(this.invoice_id);
   }
 
-async evaluate(observation) {
+  async evaluate(observation) {
 
-  if (!observation) {
-    return {
-      nextState: "EXCEPTION_REVIEW",
-      reason: "No extraction response"
-    };
-  }
-
-  if (observation.success) {
-    return {
-      nextState: "STRUCTURED",
-      reason: "Invoice successfully extracted"
-    };
-  }
-
-  switch (observation.failure_type) {
-
-    case "LOW_QUALITY_PDF":
-    case "CORRUPTED_PDF":
-    case "PASSWORD_PROTECTED":
+    // console.log("Extraction observation:", observation);
+    // If worker crashed or returned nothing
+    if (!observation) {
       return {
         nextState: "WAITING_INFO",
-        reason: observation.failure_type
+        reason: "NO_EXTRACTION_RESPONSE"
       };
+    }
 
-    case "STATE_NOT_FOUND":
-    case "INVALID_STATE":
+    // Successful extraction
+    if (observation.success) {
       return {
-        nextState: "EXCEPTION_REVIEW",
-        reason: "Invalid state configuration"
+        nextState: "STRUCTURED",
+        reason: "Invoice successfully extracted"
       };
+    }
 
-    default:
-      return {
-        nextState: "EXCEPTION_REVIEW",
-        reason: observation.outcome || "Unknown extraction error"
-      };
+    // Known extraction failures (vendor-fixable)
+    switch (observation.failure_type) {
+
+      case "LOW_QUALITY_PDF":
+      case "CORRUPTED_PDF":
+      case "PASSWORD_PROTECTED":
+        return {
+          nextState: "WAITING_INFO",
+          reason: observation.failure_type
+        };
+
+      case "FILE_NOT_FOUND":
+        return {
+          nextState: "WAITING_INFO",
+          reason: "FILE_NOT_FOUND"
+        };
+
+      default:
+        return {
+          nextState: "WAITING_INFO",
+          reason: observation.failure_type || "UNKNOWN_EXTRACTION_ERROR"
+        };
+    }
   }
-}
 }

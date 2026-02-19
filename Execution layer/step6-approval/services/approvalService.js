@@ -3,33 +3,6 @@ import { determineApprovalLevel } from "./approvalRules.js";
 
 export async function runApproval(invoice_id) {
 
-    const complianceRes = await db.query(
-        `
-        SELECT overall_compliance_status
-        FROM invoice_compliance_results
-        WHERE invoice_id = $1
-        `,
-        [invoice_id]
-    );
-
-    if (!complianceRes.rows.length) {
-        return {
-            success: false,
-            status: "BLOCKED",
-            reason: "Compliance result not found"
-        };
-    }
-
-    const complianceStatus = complianceRes.rows[0].overall_compliance_status;
-
-    if (complianceStatus === "BLOCKED") {
-        return {
-            success: false,
-            status: "BLOCKED",
-            reason: "Compliance failure"
-        };
-    }
-
     const invoiceRes = await db.query(
         `
         SELECT data
@@ -42,13 +15,19 @@ export async function runApproval(invoice_id) {
     if (!invoiceRes.rows.length) {
         return {
             success: false,
-            status: "BLOCKED",
             reason: "Invoice data not found"
         };
     }
 
     const invoiceData = invoiceRes.rows[0].data;
-    const invoiceTotal = invoiceData.invoice_total;
+    const invoiceTotal = invoiceData.total_amount;
+
+    if (!invoiceTotal) {
+        return {
+            success: false,
+            reason: "Invoice total missing"
+        };
+    }
 
     const approvalLevel = determineApprovalLevel(invoiceTotal);
 
