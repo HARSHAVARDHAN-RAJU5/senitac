@@ -50,22 +50,10 @@ export async function execute(invoice_id, organization_id) {
     };
   }
 
-  if (currentState === "PAYMENT_READY") {
-
-    await pool.query(
-      `
-      UPDATE invoice_payment_schedule
-      SET payment_status = 'PAID',
-          paid_at = NOW()
-      WHERE invoice_id = $1
-      AND organization_id = $2
-      `,
-      [invoice_id, organization_id]
-    );
-
-    return {
-      success: true,
-      nextState: "COMPLETED"
-    };
-  }
+if (currentState === "PAYMENT_READY") {
+  return {
+    success: true,
+    nextState: "PAYMENT_READY"
+  };
+}
 }
