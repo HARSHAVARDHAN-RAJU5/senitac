@@ -1,7 +1,9 @@
 import pool from "../db.js";
 import { runPaymentScheduling } from "../Execution layer/step7-payment/services/paymentService.js";
 
-export async function execute(invoice_id, organization_id) {
+export async function execute(context) {
+
+  const { invoice_id, organization_id } = context;
 
   if (!invoice_id || !organization_id) {
     throw new Error("PaymentWorker requires invoice_id and organization_id");
@@ -31,10 +33,7 @@ export async function execute(invoice_id, organization_id) {
 
   if (currentState === "APPROVED") {
 
-    const paymentResult = await runPaymentScheduling(
-      invoice_id,
-      organization_id
-    );
+    const paymentResult = await runPaymentScheduling(context);
 
     if (!paymentResult?.success) {
       return {
@@ -50,10 +49,10 @@ export async function execute(invoice_id, organization_id) {
     };
   }
 
-if (currentState === "PAYMENT_READY") {
-  return {
-    success: true,
-    nextState: "PAYMENT_READY"
-  };
-}
+  if (currentState === "PAYMENT_READY") {
+    return {
+      success: true,
+      nextState: "PAYMENT_READY"
+    };
+  }
 }

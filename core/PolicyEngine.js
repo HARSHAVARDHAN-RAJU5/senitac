@@ -2,30 +2,19 @@ import db from "../db.js";
 
 export default class PolicyEngine {
 
-  static async getApprovalRule(organization_id, amount) {
+  static async loadAllConfigs(organization_id) {
 
-    const result = await db.query(
+    const approvalRes = await db.query(
       `
-      SELECT approver_role
+      SELECT min_amount, max_amount, approver_role
       FROM approval_config
       WHERE organization_id = $1
-      AND $2 BETWEEN min_amount AND max_amount
-      LIMIT 1
+      ORDER BY min_amount ASC
       `,
-      [organization_id, amount]
+      [organization_id]
     );
 
-    if (!result.rows.length) {
-      throw new Error("No approval rule configured for this amount");
-    }
-
-    return result.rows[0].approver_role;
-  }
-
-
-  static async getMatchingTolerance(organization_id) {
-
-    const result = await db.query(
+    const matchingRes = await db.query(
       `
       SELECT *
       FROM matching_tolerance_config
@@ -34,17 +23,7 @@ export default class PolicyEngine {
       [organization_id]
     );
 
-    if (!result.rows.length) {
-      throw new Error("Matching tolerance not configured");
-    }
-
-    return result.rows[0];
-  }
-
-
-  static async getTaxConfig(organization_id) {
-
-    const result = await db.query(
+    const taxRes = await db.query(
       `
       SELECT *
       FROM tax_rules_config
@@ -53,17 +32,7 @@ export default class PolicyEngine {
       [organization_id]
     );
 
-    if (!result.rows.length) {
-      throw new Error("Tax config not configured");
-    }
-
-    return result.rows[0];
-  }
-
-
-  static async getPaymentPolicy(organization_id) {
-
-    const result = await db.query(
+    const paymentRes = await db.query(
       `
       SELECT *
       FROM payment_policy_config
@@ -72,10 +41,30 @@ export default class PolicyEngine {
       [organization_id]
     );
 
-    if (!result.rows.length) {
-      throw new Error("Payment policy not configured");
-    }
+    const approvalLevels = approvalRes.rows.map(row => ({
+      min_amount: parseFloat(row.min_amount),
+      max_amount: parseFloat(row.max_amount),
+      approval_level: row.approver_role
+    }));
 
-    return result.rows[0];
+    const matchingConfig = matchingRes.rows[0] || {
+      price_variance_percentage: 0.02
+    };
+
+    const taxConfig = taxRes.rows[0] || {};
+
+    const paymentConfig = paymentRes.rows[0] || {
+      default_due_days: 30,
+      max_retry_count: 2
+    };
+
+    return {
+      approval: {
+        levels: approvalLevels
+      },
+      matching: matchingConfig,
+      tax: taxConfig,
+      payment: paymentConfig
+    };
   }
 }

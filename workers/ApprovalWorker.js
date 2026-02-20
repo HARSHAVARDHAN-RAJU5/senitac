@@ -1,9 +1,11 @@
 import pool from "../db.js";
 import { runApproval } from "../Execution layer/step6-approval/services/approvalService.js";
 
-export async function execute(invoice_id, organization_id) {
+export async function execute(context) {
 
-  // Validate state (tenant isolated)
+  const { invoice_id, organization_id } = context;
+
+  // 🔵 Validate state (tenant isolated)
   const stateCheck = await pool.query(
     `
     SELECT current_state
@@ -22,9 +24,9 @@ export async function execute(invoice_id, organization_id) {
     throw new Error("Invalid state for ApprovalWorker");
   }
 
-  // Run approval service (tenant-aware)
-  const approvalResult = await runApproval(invoice_id, organization_id);
+  // 🔵 Phase 4 — pass full context to service layer
+  const approvalResult = await runApproval(context);
 
-  // Worker returns signals only
+  // Worker returns deterministic signal only
   return approvalResult;
 }

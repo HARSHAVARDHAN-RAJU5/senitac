@@ -5,6 +5,7 @@ dotenv.config();
 
 import SupervisorAgent from "./agent/SupervisorAgent.js";
 import * as NotificationWorker from "./workers/NotificationWorker.js";
+import PolicyEngine from "./engine/PolicyEngine.js";
 
 const redis = createClient({
   url: "redis://127.0.0.1:6379"
@@ -49,19 +50,6 @@ async function logAudit(
   );
 }
 
-async function getMaxRetryLimit(organization_id) {
-  const policyRes = await pool.query(
-    `
-    SELECT max_retry_count
-    FROM payment_policy_config
-    WHERE organization_id = $1
-    `,
-    [organization_id]
-  );
-
-  return policyRes.rows[0]?.max_retry_count ?? 2; // default fallback
-}
-
 async function processInvoice(invoice_id, organization_id) {
 
   const stateRes = await pool.query(
@@ -83,7 +71,6 @@ async function processInvoice(invoice_id, organization_id) {
 
   console.log("Current State:", current_state);
 
-  // Terminal states
   if (
     current_state === "COMPLETED" ||
     current_state === "BLOCKED" ||
@@ -95,10 +82,16 @@ async function processInvoice(invoice_id, organization_id) {
 
   try {
 
-    const supervisor = new SupervisorAgent(
+    // 🔵 PHASE 4 — CONTEXT INJECTION
+    const config = await PolicyEngine.loadAllConfigs(organization_id);
+
+    const context = {
       invoice_id,
-      organization_id
-    );
+      organization_id,
+      config
+    };
+
+    const supervisor = new SupervisorAgent(context);
 
     const result = await supervisor.executeStep();
 
@@ -109,9 +102,11 @@ async function processInvoice(invoice_id, organization_id) {
 
     const decision = result.decision;
 
+    // 🔵 Retry Handling (now using injected config)
     if (decision.retry === true) {
 
-      const maxRetry = await getMaxRetryLimit(organization_id);
+      const maxRetry =
+        context.config?.payment?.max_retry_count ?? 2;
 
       if (retry_count >= maxRetry) {
 
@@ -193,7 +188,6 @@ async function processInvoice(invoice_id, organization_id) {
 
     console.log("Moved to:", decision.nextState);
 
-    // WAITING_INFO notification
     if (decision.nextState === "WAITING_INFO") {
       await NotificationWorker.execute(
         invoice_id,
@@ -203,7 +197,6 @@ async function processInvoice(invoice_id, organization_id) {
       return;
     }
 
-    // Emit next event
     if (
       decision.nextState !== "BLOCKED" &&
       decision.nextState !== "COMPLETED"

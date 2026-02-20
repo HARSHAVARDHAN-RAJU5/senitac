@@ -10,9 +10,11 @@ import ExceptionReviewAgent from "./ExceptionReviewAgent.js";
 
 export default class SupervisorAgent {
 
-  constructor(invoice_id, organization_id) {
-    this.invoice_id = invoice_id;
-    this.organization_id = organization_id;
+  constructor(context) {
+    this.context = context;
+    this.invoice_id = context.invoice_id;
+    this.organization_id = context.organization_id;
+    this.config = context.config; // 🔵 Injected governance
   }
 
   async getCurrentState() {
@@ -39,10 +41,7 @@ export default class SupervisorAgent {
     switch (state) {
 
       case "RECEIVED":
-        return new IntakeExtractionAgent(
-          this.invoice_id,
-          this.organization_id
-        );
+        return new IntakeExtractionAgent(this.context);
 
       case "STRUCTURED":
         return {
@@ -53,41 +52,23 @@ export default class SupervisorAgent {
         };
 
       case "DUPLICATE_CHECK":
-        return new DuplicateAgent(
-          this.invoice_id,
-          this.organization_id
-        );
+        return new DuplicateAgent(this.context);
 
       case "VALIDATING":
-        return new ValidationAgent(
-          this.invoice_id,
-          this.organization_id
-        );
+        return new ValidationAgent(this.context);
 
       case "MATCHING":
-        return new MatchingAgent(
-          this.invoice_id,
-          this.organization_id
-        );
+        return new MatchingAgent(this.context);
 
       case "PENDING_APPROVAL":
-        return new ApprovalAgent(
-          this.invoice_id,
-          this.organization_id
-        );
+        return new ApprovalAgent(this.context);
 
       case "APPROVED":
       case "PAYMENT_READY":
-        return new PaymentAgent(
-          this.invoice_id,
-          this.organization_id
-        );
+        return new PaymentAgent(this.context);
 
       case "EXCEPTION_REVIEW":
-        return new ExceptionReviewAgent(
-          this.invoice_id,
-          this.organization_id
-        );
+        return new ExceptionReviewAgent(this.context);
 
       default:
         throw new Error(`No agent mapped for state: ${state}`);
@@ -100,7 +81,6 @@ export default class SupervisorAgent {
 
     const agent = this.selectAgent(state);
 
-    // Support both BaseAgent pattern and inline run()
     let decision;
 
     if (typeof agent.run === "function") {

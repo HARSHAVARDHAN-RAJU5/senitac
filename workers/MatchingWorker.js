@@ -1,14 +1,16 @@
 import { runMatching } from "../Execution layer/step4-matching/services/servicesMatching.js";
 import { runCompliance } from "../Execution layer/step5-compliance/services/servicesCompliance.js";
 
-export async function execute(invoice_id, organization_id) {
+export async function execute(context) {
+
+  const { invoice_id, organization_id } = context;
 
   if (!invoice_id || !organization_id) {
     throw new Error("MatchingWorker requires invoice_id and organization_id");
   }
 
   // Run PO Matching
-  const matching = await runMatching(invoice_id, organization_id);
+  const matching = await runMatching(context);
 
   if (!matching?.success) {
     return {
@@ -19,7 +21,7 @@ export async function execute(invoice_id, organization_id) {
   }
 
   // Run Compliance
-  const compliance = await runCompliance(invoice_id, organization_id);
+  const compliance = await runCompliance(context);
 
   if (!compliance?.success) {
     return {

@@ -1,8 +1,9 @@
 import db from "../../../db.js";
 import { evaluateTax } from "./taxEngineCompliance.js";
-import policyConfig from "../rules/policyRules.js";
 
-export const runCompliance = async (invoice_id, organization_id) => {
+export const runCompliance = async (context) => {
+
+  const { invoice_id, organization_id, config } = context;
 
   const invoiceRes = await db.query(
     `SELECT data
@@ -30,15 +31,18 @@ export const runCompliance = async (invoice_id, organization_id) => {
 
   const taxResult = await evaluateTax(invoice);
 
+  const invoiceTotal = parseFloat(invoice.total_amount || 0);
+
+  const highValueThreshold =
+    config?.approval?.high_value_threshold ?? Infinity;
+
   return {
     success: true,
     signals: {
       missing_po_flag: poResult.missing_po_flag,
       price_variance_flag: poResult.price_variance_flag,
       tax_status: taxResult.status,
-      high_value_flag:
-        parseFloat(invoice.total_amount || 0) >
-        policyConfig.approval.highValueThreshold
+      high_value_flag: invoiceTotal > highValueThreshold
     }
   };
 };

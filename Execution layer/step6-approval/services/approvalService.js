@@ -1,9 +1,11 @@
 import db from "../../../db.js";
 import { determineApprovalLevel } from "./approvalRules.js";
 
-export async function runApproval(invoice_id, organization_id) {
+export async function runApproval(context) {
 
-  // Fetch invoice data (tenant isolated)
+  const { invoice_id, organization_id, config } = context;
+
+  // 🔵 Fetch invoice data (tenant isolated)
   const invoiceRes = await db.query(
     `
     SELECT data
@@ -31,13 +33,13 @@ export async function runApproval(invoice_id, organization_id) {
     };
   }
 
-  // Determine dynamic approval level
-  const approvalLevel = await determineApprovalLevel(
+  // 🔵 Phase 4 — use injected approval config
+  const approvalLevel = determineApprovalLevel(
     invoiceTotal,
-    organization_id
+    config.approval
   );
 
-  // Insert / Update workflow record (multi-tenant safe)
+  // 🔵 Upsert workflow (multi-tenant safe)
   await db.query(
     `
     INSERT INTO invoice_approval_workflow

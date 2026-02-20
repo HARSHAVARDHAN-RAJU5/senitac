@@ -1,9 +1,10 @@
 import db from "../../../db.js";
-import PolicyEngine from "../../core/PolicyEngine.js";
 
-export async function runPaymentScheduling(invoice_id, organization_id) {
+export async function runPaymentScheduling(context) {
 
-  // 1️⃣ Validate approval (tenant isolated)
+  const { invoice_id, organization_id, config } = context;
+
+  // 1. Validate approval (tenant isolated)
   const approvalRes = await db.query(
     `
     SELECT approval_status
@@ -32,7 +33,7 @@ export async function runPaymentScheduling(invoice_id, organization_id) {
     };
   }
 
-  // 2️⃣ Fetch extracted invoice data
+  // 2. Fetch extracted invoice data
   const invoiceRes = await db.query(
     `
     SELECT data
@@ -53,20 +54,20 @@ export async function runPaymentScheduling(invoice_id, organization_id) {
 
   const invoiceData = invoiceRes.rows[0].data;
 
-  // 3️⃣ Load dynamic payment policy
-  const paymentPolicy = await PolicyEngine.getPaymentPolicy(organization_id);
+  // 3. Use injected payment policy
+  const paymentPolicy = config?.payment || {};
 
-  // 4️⃣ Determine due date (correct priority logic)
+  // 4. Determine due date (priority: invoice > policy)
   let dueDate;
 
   if (invoiceData?.due_date) {
     dueDate = invoiceData.due_date;
-  } 
-  else if (paymentPolicy?.default_payment_terms_days) {
+  }
+  else if (paymentPolicy?.default_due_days) {
     dueDate = calculateDueDate(
-      paymentPolicy.default_payment_terms_days
+      paymentPolicy.default_due_days
     );
-  } 
+  }
   else {
     dueDate = null;
   }
@@ -84,7 +85,7 @@ export async function runPaymentScheduling(invoice_id, organization_id) {
     };
   }
 
-  // 5️⃣ Insert / Update schedule (multi-tenant safe)
+  // 5. Insert / Update schedule (multi-tenant safe)
   await db.query(
     `
     INSERT INTO invoice_payment_schedule
@@ -111,7 +112,6 @@ export async function runPaymentScheduling(invoice_id, organization_id) {
     status: "PAYMENT_READY"
   };
 }
-
 
 // Utility: calculate due date from today + N days
 function calculateDueDate(days) {
