@@ -3,15 +3,18 @@ import * as DuplicateWorker from "../workers/DuplicateWorker.js";
 
 export default class DuplicateAgent extends BaseAgent {
 
-  async plan() {
-    return { action: "RUN_DUPLICATE_CHECK" };
+  constructor(context) {
+    super(context);
   }
 
-  async act() {
-    return await DuplicateWorker.execute(
-      this.invoice_id,
-      this.organization_id
-    );
+  async plan() {
+    return {
+      action: "RUN_DUPLICATE_CHECK"
+    };
+  }
+
+  async act(plan) {
+    return await DuplicateWorker.execute(this.context);
   }
 
   async evaluate(observation) {

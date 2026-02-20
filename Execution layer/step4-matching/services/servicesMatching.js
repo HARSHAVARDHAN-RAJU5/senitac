@@ -4,12 +4,18 @@ export const runMatching = async (context) => {
 
   const { invoice_id, organization_id, config } = context;
 
+  if (!invoice_id || !organization_id) {
+    throw new Error("runMatching requires invoice_id and organization_id");
+  }
+
   // 1. Check vendor validation
   const validationRes = await db.query(
-    `SELECT overall_status, vendor_id, bank_status
-     FROM invoice_validation_results
-     WHERE invoice_id = $1
-     AND organization_id = $2`,
+    `
+    SELECT overall_status, vendor_id, bank_status
+    FROM invoice_validation_results
+    WHERE invoice_id = $1
+      AND organization_id = $2
+    `,
     [invoice_id, organization_id]
   );
 
@@ -17,23 +23,27 @@ export const runMatching = async (context) => {
     !validationRes.rows.length ||
     validationRes.rows[0].overall_status !== "VALID"
   ) {
-    return { success: false };
+    return { success: false, reason: "Vendor not valid" };
   }
 
   const { vendor_id, bank_status } = validationRes.rows[0];
 
   // 2. Fetch extracted invoice data
   const invoiceRes = await db.query(
-    `SELECT data
-     FROM invoice_extracted_data
-     WHERE invoice_id = $1
-     AND organization_id = $2`,
+    `
+    SELECT data
+    FROM invoice_extracted_data
+    WHERE invoice_id = $1
+      AND organization_id = $2
+    `,
     [invoice_id, organization_id]
   );
 
-  if (!invoiceRes.rows.length) return { success: false };
+  if (!invoiceRes.rows.length) {
+    return { success: false, reason: "Extracted data not found" };
+  }
 
-  const invoice = invoiceRes.rows[0].data;
+  const invoice = invoiceRes.rows[0].data || {};
   const invoiceTotal = parseFloat(invoice.total_amount || 0);
   const poNumber = invoice.po_number || null;
 
@@ -49,10 +59,12 @@ export const runMatching = async (context) => {
   // 4. Direct PO number match
   if (poNumber) {
     const poRes = await db.query(
-      `SELECT *
-       FROM purchase_orders
-       WHERE po_number = $1
-       AND organization_id = $2`,
+      `
+      SELECT *
+      FROM purchase_orders
+      WHERE po_number = $1
+        AND organization_id = $2
+      `,
       [poNumber, organization_id]
     );
 
@@ -64,10 +76,12 @@ export const runMatching = async (context) => {
   // 5. Fallback: vendor + tolerance match
   if (!po) {
     const vendorPOs = await db.query(
-      `SELECT *
-       FROM purchase_orders
-       WHERE vendor_id = $1
-       AND organization_id = $2`,
+      `
+      SELECT *
+      FROM purchase_orders
+      WHERE vendor_id = $1
+        AND organization_id = $2
+      `,
       [vendor_id, organization_id]
     );
 
@@ -100,8 +114,8 @@ export const runMatching = async (context) => {
   await db.query(
     `
     INSERT INTO invoice_po_matching_results
-    (invoice_id, organization_id, po_number, matching_status,
-     missing_po_flag, price_variance_flag, matched_at)
+      (invoice_id, organization_id, po_number, matching_status,
+       missing_po_flag, price_variance_flag, matched_at)
     VALUES ($1,$2,$3,$4,$5,$6,NOW())
     ON CONFLICT (invoice_id, organization_id)
     DO UPDATE SET

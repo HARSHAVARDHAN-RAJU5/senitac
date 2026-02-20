@@ -3,11 +3,17 @@ import pool from "../db.js";
 
 export default class ExceptionReviewAgent extends BaseAgent {
 
-  async plan() {
-    return { action: "CHECK_EXCEPTION_DECISION" };
+  constructor(context) {
+    super(context);
   }
 
-  async act() {
+  async plan() {
+    return {
+      action: "CHECK_EXCEPTION_DECISION"
+    };
+  }
+
+  async act(plan) {
 
     const res = await pool.query(
       `
@@ -49,7 +55,6 @@ export default class ExceptionReviewAgent extends BaseAgent {
       };
     }
 
-    // Tenant-safe decision processing
     await pool.query(
       `
       UPDATE exception_review_decisions

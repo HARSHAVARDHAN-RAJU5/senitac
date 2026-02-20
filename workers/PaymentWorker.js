@@ -9,13 +9,12 @@ export async function execute(context) {
     throw new Error("PaymentWorker requires invoice_id and organization_id");
   }
 
-  // Tenant isolated state check
   const stateCheck = await pool.query(
     `
     SELECT current_state
     FROM invoice_state_machine
     WHERE invoice_id = $1
-    AND organization_id = $2
+      AND organization_id = $2
     `,
     [invoice_id, organization_id]
   );
@@ -26,7 +25,6 @@ export async function execute(context) {
 
   const currentState = stateCheck.rows[0].current_state;
 
-  // Allow only APPROVED or PAYMENT_READY
   if (currentState !== "APPROVED" && currentState !== "PAYMENT_READY") {
     throw new Error("Invalid state for PaymentWorker");
   }
@@ -38,7 +36,6 @@ export async function execute(context) {
     if (!paymentResult?.success) {
       return {
         success: false,
-        nextState: "BLOCKED",
         reason: paymentResult?.reason || "Payment scheduling failed"
       };
     }
@@ -55,4 +52,9 @@ export async function execute(context) {
       nextState: "PAYMENT_READY"
     };
   }
+
+  return {
+    success: false,
+    reason: "Unhandled payment state"
+  };
 }

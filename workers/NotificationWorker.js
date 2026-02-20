@@ -48,11 +48,13 @@ Instructions:
   return data.response.trim();
 }
 
+export async function execute(context) {
 
-export async function execute(invoiceId, organization_id, reason) {
+  const { invoice_id, organization_id } = context;
+  const reason = context.reason || "Additional information required";
 
-  if (!invoiceId || !organization_id) {
-    throw new Error("NotificationWorker requires invoiceId and organization_id");
+  if (!invoice_id || !organization_id) {
+    throw new Error("NotificationWorker requires invoice_id and organization_id");
   }
 
   const token = crypto.randomBytes(32).toString("hex");
@@ -72,7 +74,7 @@ export async function execute(invoiceId, organization_id, reason) {
     WHERE invoice_id = $3
     AND organization_id = $4
     `,
-    [token, reason, invoiceId, organization_id]
+    [token, reason, invoice_id, organization_id]
   );
 
   let issueContext = reason;
@@ -86,7 +88,7 @@ export async function execute(invoiceId, organization_id, reason) {
       WHERE invoice_id = $1
       AND organization_id = $2
       `,
-      [invoiceId, organization_id]
+      [invoice_id, organization_id]
     );
 
     if (validationRes.rows.length) {
@@ -110,7 +112,7 @@ Vendor Validation Summary:
 
   try {
     emailBody = await generateEmailBody(
-      invoiceId,
+      invoice_id,
       issueContext,
       recoveryLink
     );
@@ -121,7 +123,7 @@ Vendor Validation Summary:
     emailBody = `
 Dear Vendor,
 
-We require clarification regarding invoice ${invoiceId}.
+We require clarification regarding invoice ${invoice_id}.
 
 Issue:
 ${reason}
@@ -136,7 +138,7 @@ Accounts Payable Team
 `;
   }
 
-  console.log("Sending vendor notification for invoice:", invoiceId);
+  console.log("Sending vendor notification for invoice:", invoice_id);
   console.log(emailBody);
 
   return { success: true };

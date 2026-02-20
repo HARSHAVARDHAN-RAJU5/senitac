@@ -18,19 +18,20 @@ function extractFieldByLabel(text, label) {
   return match ? normalizeText(match[1]) : null;
 }
 
-async function extractAndStructure(invoice_id, organization_id) {
+async function extractAndStructure(context) {
+
+  const { invoice_id, organization_id } = context;
 
   if (!invoice_id || !organization_id) {
     throw new Error("Extraction requires invoice_id and organization_id");
   }
 
-  // ✅ Tenant isolated invoice lookup
   const invoiceRes = await pool.query(
     `
     SELECT file_path
     FROM invoices
     WHERE invoice_id = $1
-    AND organization_id = $2
+      AND organization_id = $2
     `,
     [invoice_id, organization_id]
   );
@@ -49,7 +50,6 @@ async function extractAndStructure(invoice_id, organization_id) {
   const pdfData = await pdf(buffer);
   const text = pdfData.text;
 
-  // --- Field Extraction ---
   const invoice_number = extractFieldByLabel(text, "Invoice Number");
   const vendor_name = extractFieldByLabel(text, "Vendor Name");
   const po_number = extractFieldByLabel(text, "PO Number");
@@ -79,11 +79,10 @@ async function extractAndStructure(invoice_id, organization_id) {
     return { success: false, failure_type: "STRUCTURED_FIELDS_MISSING" };
   }
 
-  // ✅ Multi-tenant upsert
   await pool.query(
     `
     INSERT INTO invoice_extracted_data
-    (invoice_id, organization_id, data, extraction_status, extracted_at)
+      (invoice_id, organization_id, data, extraction_status, extracted_at)
     VALUES ($1, $2, $3, $4, NOW())
     ON CONFLICT (invoice_id, organization_id)
     DO UPDATE SET

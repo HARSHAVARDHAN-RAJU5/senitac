@@ -5,19 +5,38 @@ function normalizeCompare(value) {
   return value.trim().toUpperCase();
 }
 
-async function validateVendor(invoiceId, organization_id) {
+async function validateVendor(context) {
+
+  const { invoice_id, organization_id } = context;
+
+  if (!invoice_id || !organization_id) {
+    throw new Error("validateVendor requires invoice_id and organization_id");
+  }
 
   const extractedResult = await db.query(
-    "SELECT data, extraction_status FROM invoice_extracted_data WHERE invoice_id = $1 AND organization_id = $2",
-    [invoiceId, organization_id = $2]
+    `
+    SELECT data, extraction_status
+    FROM invoice_extracted_data
+    WHERE invoice_id = $1
+      AND organization_id = $2
+    `,
+    [invoice_id, organization_id]
   );
 
   if (!extractedResult.rows.length) {
-    return { success: false, status: "BLOCKED", reason: "No extracted data found" };
+    return {
+      success: false,
+      status: "BLOCKED",
+      reason: "No extracted data found"
+    };
   }
 
   if (extractedResult.rows[0].extraction_status !== "SUCCESS") {
-    return { success: false, status: "REVIEW_REQUIRED", reason: "Extraction not successful" };
+    return {
+      success: false,
+      status: "REVIEW_REQUIRED",
+      reason: "Extraction not successful"
+    };
   }
 
   const extracted = extractedResult.rows[0].data || {};
@@ -36,16 +55,29 @@ async function validateVendor(invoiceId, organization_id) {
     extracted.bank_account || null;
 
   if (!taxId) {
-    return { success: false, status: "REVIEW_REQUIRED", reason: "GST not found in invoice" };
+    return {
+      success: false,
+      status: "REVIEW_REQUIRED",
+      reason: "GST not found in invoice"
+    };
   }
 
   const vendorResult = await db.query(
-    "SELECT * FROM vendor_master WHERE tax_id = $1 AND organization_id = $2",
+    `
+    SELECT *
+    FROM vendor_master
+    WHERE tax_id = $1
+      AND organization_id = $2
+    `,
     [taxId, organization_id]
   );
 
   if (!vendorResult.rows.length) {
-    return { success: false, status: "REVIEW_REQUIRED", reason: "Vendor not found" };
+    return {
+      success: false,
+      status: "REVIEW_REQUIRED",
+      reason: "Vendor not found"
+    };
   }
 
   const vendor = vendorResult.rows[0];
@@ -81,17 +113,22 @@ async function validateVendor(invoiceId, organization_id) {
   }
 
   await db.query(
-    `INSERT INTO invoice_validation_results 
-     (invoice_id, organization_id, vendor_id, legal_status, tax_status, bank_status, overall_status, validated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
-     ON CONFLICT (invoice_id) DO UPDATE SET
-       legal_status = EXCLUDED.legal_status,
-       tax_status = EXCLUDED.tax_status,
-       bank_status = EXCLUDED.bank_status,
-       overall_status = EXCLUDED.overall_status,
-       validated_at = NOW()`,
+    `
+    INSERT INTO invoice_validation_results
+      (invoice_id, organization_id, vendor_id,
+       legal_status, tax_status, bank_status,
+       overall_status, validated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+    ON CONFLICT (invoice_id, organization_id)
+    DO UPDATE SET
+      legal_status = EXCLUDED.legal_status,
+      tax_status = EXCLUDED.tax_status,
+      bank_status = EXCLUDED.bank_status,
+      overall_status = EXCLUDED.overall_status,
+      validated_at = NOW()
+    `,
     [
-      invoiceId,
+      invoice_id,
       organization_id,
       vendor.vendor_id,
       legalStatus,

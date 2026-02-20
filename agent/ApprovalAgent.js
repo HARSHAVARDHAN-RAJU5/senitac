@@ -5,18 +5,15 @@ export default class ApprovalAgent extends BaseAgent {
 
   constructor(context) {
     super(context);
-    this.context = context;
-    this.invoice_id = context.invoice_id;
-    this.organization_id = context.organization_id;
-    this.config = context.config;
   }
 
   async plan() {
-    return { action: "RUN_APPROVAL_ROUTING" };
+    return {
+      action: "RUN_APPROVAL_ROUTING"
+    };
   }
 
-  async act() {
-    // 🔵 Phase 4 — pass full context
+  async act(plan) {
     return await ApprovalWorker.execute(this.context);
   }
 

@@ -1,14 +1,19 @@
 import pool from "../db.js";
 import validateVendor from "../Execution layer/step3-validation/services/servicesValidation.js";
 
-export async function execute(invoice_id, organization_id) {
+export async function execute(context) {
 
-  // Ensure correct state (ORG SCOPED)
+  const { invoice_id, organization_id } = context;
+
+  if (!invoice_id || !organization_id) {
+    throw new Error("ValidationWorker requires invoice_id and organization_id");
+  }
+
   const stateCheck = await pool.query(
     `
-      SELECT current_state
-      FROM invoice_state_machine
-      WHERE invoice_id = $1
+    SELECT current_state
+    FROM invoice_state_machine
+    WHERE invoice_id = $1
       AND organization_id = $2
     `,
     [invoice_id, organization_id]
@@ -24,13 +29,7 @@ export async function execute(invoice_id, organization_id) {
     throw new Error("Invalid state for ValidationWorker");
   }
 
-  // Execute deterministic validation logic (PASS ORG)
-  const validationResult = await validateVendor(
-    invoice_id,
-    organization_id
-  );
-
-  console.log("Validation Result:", validationResult);
+  const validationResult = await validateVendor(context);
 
   if (!validationResult) {
     await storeError(invoice_id, organization_id, "Vendor validation returned null");
@@ -59,17 +58,14 @@ export async function execute(invoice_id, organization_id) {
   return validationResult;
 }
 
-
 async function storeError(invoice_id, organization_id, reason) {
-
-  console.log("Vendor Failure Reason:", reason);
 
   await pool.query(
     `
-      UPDATE invoice_state_machine
-      SET error_reason = $1,
-          last_updated = NOW()
-      WHERE invoice_id = $2
+    UPDATE invoice_state_machine
+    SET error_reason = $1,
+        last_updated = NOW()
+    WHERE invoice_id = $2
       AND organization_id = $3
     `,
     [reason, invoice_id, organization_id]

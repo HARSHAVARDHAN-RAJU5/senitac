@@ -1,6 +1,8 @@
 import pool from "../db.js";
 
-export async function execute(invoice_id, organization_id) {
+export async function execute(context) {
+
+  const { invoice_id, organization_id } = context;
 
   if (!invoice_id || !organization_id) {
     throw new Error("DuplicateCheckWorker requires invoice_id and organization_id");

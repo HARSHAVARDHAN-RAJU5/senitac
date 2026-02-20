@@ -5,17 +5,18 @@ import axios from "axios";
 
 export default class ValidationAgent extends BaseAgent {
 
+  constructor(context) {
+    super(context);
+  }
+
   async plan() {
-    return { invoice_id: this.invoice_id };
+    return {
+      action: "RUN_VENDOR_VALIDATION"
+    };
   }
 
   async act(plan) {
-    const result = await ValidationWorker(plan.invoice_id, this.organization_id);
-    return result;
-  }
-
-  async observe(result) {
-    return result;
+    return await ValidationWorker(this.context);
   }
 
   async evaluate(result) {
@@ -56,12 +57,14 @@ export default class ValidationAgent extends BaseAgent {
   async buildRiskContext() {
 
     const extracted = await pool.query(
-      `SELECT data FROM invoice_extracted_data WHERE invoice_id = $1 AND organization_id = $2`,
+      `SELECT data FROM invoice_extracted_data 
+       WHERE invoice_id = $1 AND organization_id = $2`,
       [this.invoice_id, this.organization_id]
     );
 
     const validation = await pool.query(
-      `SELECT * FROM invoice_validation_results WHERE invoice_id = $1 AND organization_id = $2`,
+      `SELECT * FROM invoice_validation_results 
+       WHERE invoice_id = $1 AND organization_id = $2`,
       [this.invoice_id, this.organization_id]
     );
 
@@ -88,13 +91,24 @@ Decide:
 Respond with only one word: PROCEED / WAIT / BLOCK.
 `;
 
-    const response = await axios.post("http://127.0.0.1:11434/api/generate", {
-      model: "llama3",
-      prompt,
-      stream: false
-    });
+    let response;
 
-    const output = response.data.response.trim().toUpperCase();
+    try {
+      response = await axios.post(
+        "http://127.0.0.1:11434/api/generate",
+        {
+          model: "llama3",
+          prompt,
+          stream: false
+        }
+      );
+    } catch (err) {
+      return "BLOCK";
+    }
+
+    const output = response.data?.response?.trim()?.toUpperCase();
+
+    if (!output) return "BLOCK";
 
     if (output.includes("PROCEED")) return "PROCEED";
     if (output.includes("WAIT")) return "WAIT";

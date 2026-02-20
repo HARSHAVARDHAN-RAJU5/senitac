@@ -14,7 +14,7 @@ export default class SupervisorAgent {
     this.context = context;
     this.invoice_id = context.invoice_id;
     this.organization_id = context.organization_id;
-    this.config = context.config; // 🔵 Injected governance
+    this.config = context.config;
   }
 
   async getCurrentState() {
@@ -81,18 +81,14 @@ export default class SupervisorAgent {
 
     const agent = this.selectAgent(state);
 
-    let decision;
-
-    if (typeof agent.run === "function") {
-      decision = await agent.run();
-    } else {
-      const plan = await agent.plan();
-      const observation = await agent.act(plan);
-      decision = await agent.evaluate(observation);
+    if (!agent || typeof agent.run !== "function") {
+      throw new Error("Invalid agent instance");
     }
 
-    if (!decision || !decision.nextState) {
-      throw new Error("Agent did not return valid nextState");
+    const decision = await agent.run();
+
+    if (!decision) {
+      throw new Error("Agent returned empty decision");
     }
 
     return {

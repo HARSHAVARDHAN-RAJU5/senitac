@@ -3,9 +3,22 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 import pool from "../../../db.js";
+import { createClient } from "redis";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const redis = createClient({
+  url: "redis://127.0.0.1:6379"
+});
+
+redis.on("error", (err) => {
+  console.error("Redis Error:", err);
+});
+
+if (!redis.isOpen) {
+  await redis.connect();
+}
 
 export async function handleInvoiceIntake({
   file,
@@ -25,7 +38,6 @@ export async function handleInvoiceIntake({
 
   const invoiceId = `inv_${randomUUID()}`;
 
-  // Org isolated storage path
   const invoiceDir = path.join(
     __dirname,
     "..",
@@ -45,9 +57,9 @@ export async function handleInvoiceIntake({
   const client = await pool.connect();
 
   try {
+
     await client.query("BEGIN");
 
-    // ✅ Multi-tenant safe insert
     await client.query(
       `
       INSERT INTO invoices (
@@ -78,32 +90,60 @@ export async function handleInvoiceIntake({
       ]
     );
 
-    // ✅ Multi-tenant state machine
     await client.query(
       `
       INSERT INTO invoice_state_machine (
         invoice_id,
         organization_id,
-        current_state
+        current_state,
+        retry_count,
+        last_updated
       )
-      VALUES ($1, $2, $3)
+      VALUES ($1, $2, $3, 0, NOW())
       `,
       [invoiceId, organization_id, "RECEIVED"]
     );
 
+    await client.query(
+      `
+      INSERT INTO audit_event_log (
+        invoice_id,
+        organization_id,
+        event_type,
+        severity,
+        description
+      )
+      VALUES ($1,$2,$3,$4,$5)
+      `,
+      [
+        invoiceId,
+        organization_id,
+        "INVOICE_RECEIVED",
+        "INFO",
+        "Invoice received and initialized"
+      ]
+    );
+
     await client.query("COMMIT");
 
-    return {
-      invoice_id: invoiceId,
-      organization_id,
-      status: "RECEIVED",
-      received_at: receivedAt.toISOString()
-    };
-
   } catch (err) {
+
     await client.query("ROLLBACK");
     throw err;
+
   } finally {
     client.release();
   }
+
+  await redis.xAdd("invoice_events", "*", {
+    invoice_id: invoiceId,
+    organization_id
+  });
+
+  return {
+    invoice_id: invoiceId,
+    organization_id,
+    status: "RECEIVED",
+    received_at: receivedAt.toISOString()
+  };
 }

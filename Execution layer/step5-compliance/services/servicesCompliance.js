@@ -5,27 +5,39 @@ export const runCompliance = async (context) => {
 
   const { invoice_id, organization_id, config } = context;
 
+  if (!invoice_id || !organization_id) {
+    throw new Error("runCompliance requires invoice_id and organization_id");
+  }
+
   const invoiceRes = await db.query(
-    `SELECT data
-     FROM invoice_extracted_data
-     WHERE invoice_id = $1
-     AND organization_id = $2`,
+    `
+    SELECT data
+    FROM invoice_extracted_data
+    WHERE invoice_id = $1
+      AND organization_id = $2
+    `,
     [invoice_id, organization_id]
   );
 
-  if (!invoiceRes.rows.length) return { success: false };
+  if (!invoiceRes.rows.length) {
+    return { success: false, reason: "Extracted invoice data not found" };
+  }
 
-  const invoice = invoiceRes.rows[0].data;
+  const invoice = invoiceRes.rows[0].data || {};
 
   const matchingRes = await db.query(
-    `SELECT *
-     FROM invoice_po_matching_results
-     WHERE invoice_id = $1
-     AND organization_id = $2`,
+    `
+    SELECT *
+    FROM invoice_po_matching_results
+    WHERE invoice_id = $1
+      AND organization_id = $2
+    `,
     [invoice_id, organization_id]
   );
 
-  if (!matchingRes.rows.length) return { success: false };
+  if (!matchingRes.rows.length) {
+    return { success: false, reason: "Matching results not found" };
+  }
 
   const poResult = matchingRes.rows[0];
 

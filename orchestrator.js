@@ -6,6 +6,7 @@ dotenv.config();
 import SupervisorAgent from "./agent/SupervisorAgent.js";
 import * as NotificationWorker from "./workers/NotificationWorker.js";
 import PolicyEngine from "./engine/PolicyEngine.js";
+import { reflect } from "./core/ReflectionService.js";
 
 const redis = createClient({
   url: "redis://127.0.0.1:6379"
@@ -57,7 +58,7 @@ async function processInvoice(invoice_id, organization_id) {
     SELECT current_state, retry_count
     FROM invoice_state_machine
     WHERE invoice_id = $1
-    AND organization_id = $2
+      AND organization_id = $2
     `,
     [invoice_id, organization_id]
   );
@@ -67,7 +68,7 @@ async function processInvoice(invoice_id, organization_id) {
     return;
   }
 
-  const { current_state, retry_count } = stateRes.rows[0];
+  let { current_state, retry_count } = stateRes.rows[0];
 
   console.log("Current State:", current_state);
 
@@ -82,7 +83,6 @@ async function processInvoice(invoice_id, organization_id) {
 
   try {
 
-    // 🔵 PHASE 4 — CONTEXT INJECTION
     const config = await PolicyEngine.loadAllConfigs(organization_id);
 
     const context = {
@@ -91,8 +91,46 @@ async function processInvoice(invoice_id, organization_id) {
       config
     };
 
-    const supervisor = new SupervisorAgent(context);
+    const reflection = await reflect(context, current_state);
 
+    if (reflection?.overrideState) {
+
+      const allowed = STATE_TRANSITIONS[current_state] || [];
+
+      if (allowed.includes(reflection.overrideState)) {
+
+        await pool.query(
+          `
+          UPDATE invoice_state_machine
+          SET current_state = $1,
+              retry_count = 0,
+              last_updated = NOW()
+          WHERE invoice_id = $2
+            AND organization_id = $3
+          `,
+          [reflection.overrideState, invoice_id, organization_id]
+        );
+
+        await logAudit(
+          invoice_id,
+          organization_id,
+          current_state,
+          reflection.overrideState,
+          reflection.reason || "Reflection override"
+        );
+
+        console.log("Reflection override to:", reflection.overrideState);
+
+        await redis.xAdd("invoice_events", "*", {
+          invoice_id,
+          organization_id
+        });
+
+        return;
+      }
+    }
+
+    const supervisor = new SupervisorAgent(context);
     const result = await supervisor.executeStep();
 
     if (!result?.decision) {
@@ -102,7 +140,6 @@ async function processInvoice(invoice_id, organization_id) {
 
     const decision = result.decision;
 
-    // 🔵 Retry Handling (now using injected config)
     if (decision.retry === true) {
 
       const maxRetry =
@@ -116,7 +153,7 @@ async function processInvoice(invoice_id, organization_id) {
           SET current_state = 'BLOCKED',
               last_updated = NOW()
           WHERE invoice_id = $1
-          AND organization_id = $2
+            AND organization_id = $2
           `,
           [invoice_id, organization_id]
         );
@@ -129,7 +166,7 @@ async function processInvoice(invoice_id, organization_id) {
           "RETRY_LIMIT_EXCEEDED"
         );
 
-        console.log("Retry limit exceeded → BLOCKED");
+        console.log("Retry limit exceeded. Blocked.");
         return;
       }
 
@@ -139,7 +176,7 @@ async function processInvoice(invoice_id, organization_id) {
         SET retry_count = retry_count + 1,
             last_updated = NOW()
         WHERE invoice_id = $1
-        AND organization_id = $2
+          AND organization_id = $2
         `,
         [invoice_id, organization_id]
       );
@@ -173,7 +210,7 @@ async function processInvoice(invoice_id, organization_id) {
           retry_count = 0,
           last_updated = NOW()
       WHERE invoice_id = $2
-      AND organization_id = $3
+        AND organization_id = $3
       `,
       [decision.nextState, invoice_id, organization_id]
     );
@@ -189,11 +226,13 @@ async function processInvoice(invoice_id, organization_id) {
     console.log("Moved to:", decision.nextState);
 
     if (decision.nextState === "WAITING_INFO") {
-      await NotificationWorker.execute(
+
+      await NotificationWorker.execute({
         invoice_id,
         organization_id,
-        decision.reason
-      );
+        reason: decision.reason
+      });
+
       return;
     }
 
@@ -217,7 +256,7 @@ async function processInvoice(invoice_id, organization_id) {
       SET retry_count = retry_count + 1,
           last_updated = NOW()
       WHERE invoice_id = $1
-      AND organization_id = $2
+        AND organization_id = $2
       `,
       [invoice_id, organization_id]
     );

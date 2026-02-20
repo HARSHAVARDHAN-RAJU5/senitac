@@ -9,7 +9,7 @@ export async function execute(context) {
     throw new Error("MatchingWorker requires invoice_id and organization_id");
   }
 
-  // Run PO Matching
+  // Run PO Matching (context-aware)
   const matching = await runMatching(context);
 
   if (!matching?.success) {
@@ -20,7 +20,7 @@ export async function execute(context) {
     };
   }
 
-  // Run Compliance
+  // Run Compliance (context-aware)
   const compliance = await runCompliance(context);
 
   if (!compliance?.success) {

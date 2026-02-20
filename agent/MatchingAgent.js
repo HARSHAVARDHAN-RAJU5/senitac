@@ -18,22 +18,25 @@ function extractJSON(text) {
 
 export default class MatchingAgent extends BaseAgent {
 
-  async plan() {
-    return { action: "EVALUATE" };
+  constructor(context) {
+    super(context);
   }
 
-  async act() {
-    // ORG-SAFE CALL
-    return await Worker.execute(
-      this.invoice_id,
-      this.organization_id
-    );
+  async plan() {
+    return { action: "EVALUATE_SIGNALS" };
+  }
+
+  async act(plan) {
+    return await Worker.execute(this.context);
   }
 
   async evaluate(observation) {
 
-    if (!observation.success) {
-      return { nextState: "BLOCKED", reason: "Signal collection failed" };
+    if (!observation?.success) {
+      return {
+        nextState: "BLOCKED",
+        reason: "Signal collection failed"
+      };
     }
 
     const prompt = `
@@ -55,18 +58,32 @@ Format:
 }
 `;
 
-    const response = await axios.post(
-      "http://127.0.0.1:11434/api/generate",
-      {
-        model: "llama3",
-        prompt,
-        stream: false
-      }
-    );
+    let response;
 
-    const raw = response.data.response?.trim();
+    try {
+      response = await axios.post(
+        "http://127.0.0.1:11434/api/generate",
+        {
+          model: "llama3",
+          prompt,
+          stream: false
+        }
+      );
+    } catch (err) {
+      return {
+        nextState: "BLOCKED",
+        reason: "LLM call failed"
+      };
+    }
 
-    console.log("LLM RAW:", raw);
+    const raw = response.data?.response?.trim();
+
+    if (!raw) {
+      return {
+        nextState: "BLOCKED",
+        reason: "Empty LLM response"
+      };
+    }
 
     const jsonBlock = extractJSON(raw);
 

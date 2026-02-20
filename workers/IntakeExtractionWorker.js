@@ -1,7 +1,9 @@
 import pool from "../db.js";
 import extractAndStructure from "../Execution layer/step2-extraction/services/extractionService.js";
 
-export async function execute(invoice_id, organization_id) {
+export async function execute(context) {
+
+  const { invoice_id, organization_id } = context;
 
   if (!invoice_id || !organization_id) {
     throw new Error("ExtractionWorker requires invoice_id and organization_id");
@@ -26,11 +28,8 @@ export async function execute(invoice_id, organization_id) {
     throw new Error("Invalid state for ExtractionWorker");
   }
 
-  // Pass organization_id to service
-  const result = await extractAndStructure(
-    invoice_id,
-    organization_id
-  );
+  // Phase 4 — pass full context to extraction layer
+  const result = await extractAndStructure(context);
 
   return result;
 }

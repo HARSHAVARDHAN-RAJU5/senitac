@@ -3,15 +3,18 @@ import * as PaymentWorker from "../workers/PaymentWorker.js";
 
 export default class PaymentAgent extends BaseAgent {
 
-  async plan() {
-    return { action: "RUN_PAYMENT_PROCESS" };
+  constructor(context) {
+    super(context);
   }
 
-  async act() {
-    return await PaymentWorker.execute(
-      this.invoice_id,
-      this.organization_id
-    );
+  async plan() {
+    return {
+      action: "RUN_PAYMENT_PROCESS"
+    };
+  }
+
+  async act(plan) {
+    return await PaymentWorker.execute(this.context);
   }
 
   async evaluate(observation) {

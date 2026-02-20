@@ -4,7 +4,10 @@ export async function runPaymentScheduling(context) {
 
   const { invoice_id, organization_id, config } = context;
 
-  // 1. Validate approval (tenant isolated)
+  if (!invoice_id || !organization_id) {
+    throw new Error("runPaymentScheduling requires invoice_id and organization_id");
+  }
+
   const approvalRes = await db.query(
     `
     SELECT approval_status
@@ -20,7 +23,6 @@ export async function runPaymentScheduling(context) {
   if (!approvalRes.rows.length) {
     return {
       success: false,
-      status: "BLOCKED",
       reason: "Approval record not found"
     };
   }
@@ -28,12 +30,10 @@ export async function runPaymentScheduling(context) {
   if (approvalRes.rows[0].approval_status !== "APPROVED") {
     return {
       success: false,
-      status: "BLOCKED",
       reason: "Invoice not approved"
     };
   }
 
-  // 2. Fetch extracted invoice data
   const invoiceRes = await db.query(
     `
     SELECT data
@@ -47,28 +47,21 @@ export async function runPaymentScheduling(context) {
   if (!invoiceRes.rows.length) {
     return {
       success: false,
-      status: "BLOCKED",
       reason: "Invoice data not found"
     };
   }
 
-  const invoiceData = invoiceRes.rows[0].data;
+  const invoiceData = invoiceRes.rows[0].data || {};
 
-  // 3. Use injected payment policy
   const paymentPolicy = config?.payment || {};
 
-  // 4. Determine due date (priority: invoice > policy)
   let dueDate;
 
   if (invoiceData?.due_date) {
-    dueDate = invoiceData.due_date;
-  }
-  else if (paymentPolicy?.default_due_days) {
-    dueDate = calculateDueDate(
-      paymentPolicy.default_due_days
-    );
-  }
-  else {
+    dueDate = new Date(invoiceData.due_date);
+  } else if (paymentPolicy?.default_due_days) {
+    dueDate = calculateDueDate(paymentPolicy.default_due_days);
+  } else {
     dueDate = null;
   }
 
@@ -80,12 +73,10 @@ export async function runPaymentScheduling(context) {
   if (!dueDate) {
     return {
       success: false,
-      status: "BLOCKED",
       reason: "Payment due date missing"
     };
   }
 
-  // 5. Insert / Update schedule (multi-tenant safe)
   await db.query(
     `
     INSERT INTO invoice_payment_schedule
@@ -109,11 +100,10 @@ export async function runPaymentScheduling(context) {
 
   return {
     success: true,
-    status: "PAYMENT_READY"
+    nextState: "PAYMENT_READY"
   };
 }
 
-// Utility: calculate due date from today + N days
 function calculateDueDate(days) {
   const date = new Date();
   date.setDate(date.getDate() + Number(days));

@@ -3,15 +3,18 @@ import * as IntakeExtractionWorker from "../workers/IntakeExtractionWorker.js";
 
 export default class IntakeExtractionAgent extends BaseAgent {
 
-  async plan() {
-    return { action: "RUN_EXTRACTION" };
+  constructor(context) {
+    super(context);
   }
 
-  async act() {
-    return await IntakeExtractionWorker.execute(
-      this.invoice_id,
-      this.organization_id
-    );
+  async plan() {
+    return {
+      action: "RUN_EXTRACTION"
+    };
+  }
+
+  async act(plan) {
+    return await IntakeExtractionWorker.execute(this.context);
   }
 
   async evaluate(observation) {
