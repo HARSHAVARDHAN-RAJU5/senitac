@@ -2,11 +2,14 @@ import db from "../../../db.js";
 import { evaluateTax } from "./taxEngineCompliance.js";
 import policyConfig from "../rules/policyRules.js";
 
-export const runCompliance = async (invoice_id) => {
+export const runCompliance = async (invoice_id, organization_id) => {
 
   const invoiceRes = await db.query(
-    "SELECT data FROM invoice_extracted_data WHERE invoice_id = $1",
-    [invoice_id]
+    `SELECT data
+     FROM invoice_extracted_data
+     WHERE invoice_id = $1
+     AND organization_id = $2`,
+    [invoice_id, organization_id]
   );
 
   if (!invoiceRes.rows.length) return { success: false };
@@ -14,8 +17,11 @@ export const runCompliance = async (invoice_id) => {
   const invoice = invoiceRes.rows[0].data;
 
   const matchingRes = await db.query(
-    "SELECT * FROM invoice_po_matching_results WHERE invoice_id = $1",
-    [invoice_id]
+    `SELECT *
+     FROM invoice_po_matching_results
+     WHERE invoice_id = $1
+     AND organization_id = $2`,
+    [invoice_id, organization_id]
   );
 
   if (!matchingRes.rows.length) return { success: false };

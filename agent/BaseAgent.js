@@ -1,6 +1,7 @@
 export default class BaseAgent {
-  constructor(invoice_id) {
+  constructor(invoice_id, organization_id) {
     this.invoice_id = invoice_id;
+    this.organization_id = organization_id;
   }
 
   async plan() {

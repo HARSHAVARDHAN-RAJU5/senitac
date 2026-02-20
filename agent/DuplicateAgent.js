@@ -8,49 +8,52 @@ export default class DuplicateAgent extends BaseAgent {
   }
 
   async act() {
-    return await DuplicateWorker.execute(this.invoice_id);
+    return await DuplicateWorker.execute(
+      this.invoice_id,
+      this.organization_id
+    );
   }
 
   async evaluate(observation) {
 
-    if (!observation) {
+    if (!observation || observation.success === false) {
       return {
         nextState: "BLOCKED",
-        reason: "Duplicate check failed"
-      };
-    }
-    
-    if (observation.outcome === "NO_DUPLICATE") {
-      return {
-        nextState: "VALIDATING",
-        reason: "No duplicate detected"
+        reason: observation?.reason || "Duplicate check failed"
       };
     }
 
-    if (observation.outcome === "DUPLICATE_CONFIRMED") {
-      return {
-        nextState: "BLOCKED",
-        reason: "Duplicate invoice confirmed"
-      };
-    }
+    switch (observation.outcome) {
 
-    if (observation.outcome === "POTENTIAL_DUPLICATE") {
-      return {
-        nextState: "EXCEPTION_REVIEW",
-        reason: "Potential duplicate requires manual review"
-      };
-    }
+      case "NO_DUPLICATE":
+        return {
+          nextState: "VALIDATING",
+          reason: "No duplicate detected"
+        };
 
-    if (observation.outcome === "DATA_MISSING") {
-      return {
-        nextState: "BLOCKED",
-        reason: observation.reason || "Extraction data missing"
-      };
-    }
+      case "DUPLICATE_CONFIRMED":
+        return {
+          nextState: "BLOCKED",
+          reason: "Duplicate invoice confirmed"
+        };
 
-    return {
-      nextState: "BLOCKED",
-      reason: "Unhandled duplicate state"
-    };
+      case "POTENTIAL_DUPLICATE":
+        return {
+          nextState: "EXCEPTION_REVIEW",
+          reason: "Potential duplicate requires manual review"
+        };
+
+      case "DATA_MISSING":
+        return {
+          nextState: "BLOCKED",
+          reason: observation.reason || "Extraction data missing"
+        };
+
+      default:
+        return {
+          nextState: "BLOCKED",
+          reason: "Unhandled duplicate state"
+        };
+    }
   }
 }

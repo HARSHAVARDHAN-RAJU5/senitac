@@ -1,20 +1,21 @@
 import pool from "../db.js";
 import validateVendor from "../Execution layer/step3-validation/services/servicesValidation.js";
 
-export async function execute(invoice_id) {
+export async function execute(invoice_id, organization_id) {
 
-  // 1️⃣ Ensure correct state
+  // Ensure correct state (ORG SCOPED)
   const stateCheck = await pool.query(
     `
       SELECT current_state
       FROM invoice_state_machine
       WHERE invoice_id = $1
+      AND organization_id = $2
     `,
-    [invoice_id]
+    [invoice_id, organization_id]
   );
 
   if (!stateCheck.rows.length) {
-    throw new Error("State record not found");
+    throw new Error("State record not found for this organization");
   }
 
   const currentState = stateCheck.rows[0].current_state;
@@ -23,14 +24,16 @@ export async function execute(invoice_id) {
     throw new Error("Invalid state for ValidationWorker");
   }
 
-  // 2️⃣ Execute deterministic validation logic
-  const validationResult = await validateVendor(invoice_id);
+  // Execute deterministic validation logic (PASS ORG)
+  const validationResult = await validateVendor(
+    invoice_id,
+    organization_id
+  );
 
   console.log("Validation Result:", validationResult);
 
-  // 3️⃣ Persist error reason if present
   if (!validationResult) {
-    await storeError(invoice_id, "Vendor validation returned null");
+    await storeError(invoice_id, organization_id, "Vendor validation returned null");
     return {
       success: false,
       status: "ERROR",
@@ -40,25 +43,25 @@ export async function execute(invoice_id) {
 
   if (validationResult.success !== true) {
     const reason = validationResult.reason || "Vendor validation failed";
-    await storeError(invoice_id, reason);
+    await storeError(invoice_id, organization_id, reason);
   }
 
   if (validationResult.status === "BLOCKED") {
     const reason = validationResult.reason || "Vendor explicitly blocked";
-    await storeError(invoice_id, reason);
+    await storeError(invoice_id, organization_id, reason);
   }
 
   if (validationResult.status === "REVIEW_REQUIRED") {
     const reason = validationResult.reason || "Vendor requires review";
-    await storeError(invoice_id, reason);
+    await storeError(invoice_id, organization_id, reason);
   }
 
-  // 4️⃣ Return raw deterministic result
   return validationResult;
 }
 
 
-async function storeError(invoice_id, reason) {
+async function storeError(invoice_id, organization_id, reason) {
+
   console.log("Vendor Failure Reason:", reason);
 
   await pool.query(
@@ -67,7 +70,8 @@ async function storeError(invoice_id, reason) {
       SET error_reason = $1,
           last_updated = NOW()
       WHERE invoice_id = $2
+      AND organization_id = $3
     `,
-    [reason, invoice_id]
+    [reason, invoice_id, organization_id]
   );
 }

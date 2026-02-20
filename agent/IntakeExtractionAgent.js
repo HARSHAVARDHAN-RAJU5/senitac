@@ -7,14 +7,15 @@ export default class IntakeExtractionAgent extends BaseAgent {
     return { action: "RUN_EXTRACTION" };
   }
 
-  async act(plan) {
-    return await IntakeExtractionWorker.execute(this.invoice_id);
+  async act() {
+    return await IntakeExtractionWorker.execute(
+      this.invoice_id,
+      this.organization_id
+    );
   }
 
   async evaluate(observation) {
 
-    // console.log("Extraction observation:", observation);
-    // If worker crashed or returned nothing
     if (!observation) {
       return {
         nextState: "WAITING_INFO",
@@ -22,7 +23,6 @@ export default class IntakeExtractionAgent extends BaseAgent {
       };
     }
 
-    // Successful extraction
     if (observation.success) {
       return {
         nextState: "STRUCTURED",
@@ -30,21 +30,15 @@ export default class IntakeExtractionAgent extends BaseAgent {
       };
     }
 
-    // Known extraction failures (vendor-fixable)
     switch (observation.failure_type) {
 
       case "LOW_QUALITY_PDF":
       case "CORRUPTED_PDF":
       case "PASSWORD_PROTECTED":
-        return {
-          nextState: "WAITING_INFO",
-          reason: observation.failure_type
-        };
-
       case "FILE_NOT_FOUND":
         return {
           nextState: "WAITING_INFO",
-          reason: "FILE_NOT_FOUND"
+          reason: observation.failure_type
         };
 
       default:

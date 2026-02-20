@@ -8,20 +8,24 @@ export default class ApprovalAgent extends BaseAgent {
   }
 
   async act() {
-    return await ApprovalWorker.execute(this.invoice_id);
+    return await ApprovalWorker.execute(
+      this.invoice_id,
+      this.organization_id
+    );
   }
 
   async evaluate(observation) {
+
     if (!observation || observation.success !== true) {
       return {
         nextState: "BLOCKED",
-        reason: "Approval routing failed"
+        reason: observation?.reason || "Approval routing failed"
       };
     }
 
     return {
-      nextState: "APPROVED",
-      reason: "Approved by approval workflow"
+      nextState: observation.status || "APPROVED",
+      reason: "Approval workflow completed"
     };
   }
 }

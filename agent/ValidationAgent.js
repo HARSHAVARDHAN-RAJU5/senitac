@@ -10,7 +10,7 @@ export default class ValidationAgent extends BaseAgent {
   }
 
   async act(plan) {
-    const result = await ValidationWorker(plan.invoice_id);
+    const result = await ValidationWorker(plan.invoice_id, this.organization_id);
     return result;
   }
 
@@ -32,7 +32,7 @@ export default class ValidationAgent extends BaseAgent {
       return { nextState: "MATCHING" };
     }
 
-    // 🔹 LLM reasoning for REVIEW_REQUIRED
+    // LLM reasoning for REVIEW_REQUIRED
     if (result.status === "REVIEW_REQUIRED") {
 
       const context = await this.buildRiskContext();
@@ -56,13 +56,13 @@ export default class ValidationAgent extends BaseAgent {
   async buildRiskContext() {
 
     const extracted = await pool.query(
-      `SELECT data FROM invoice_extracted_data WHERE invoice_id = $1`,
-      [this.invoice_id]
+      `SELECT data FROM invoice_extracted_data WHERE invoice_id = $1 AND organization_id = $2`,
+      [this.invoice_id, this.organization_id]
     );
 
     const validation = await pool.query(
-      `SELECT * FROM invoice_validation_results WHERE invoice_id = $1`,
-      [this.invoice_id]
+      `SELECT * FROM invoice_validation_results WHERE invoice_id = $1 AND organization_id = $2`,
+      [this.invoice_id, this.organization_id]
     );
 
     return {

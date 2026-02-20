@@ -1,9 +1,17 @@
-export function determineApprovalLevel(invoiceTotal) {
-    if (invoiceTotal < 50000) {
-        return "LEVEL_1_FINANCE_EXEC";
-    } else if (invoiceTotal <= 200000) {
-        return "LEVEL_2_FINANCE_MANAGER";
-    } else {
-        return "CFO";
+import PolicyEngine from "../../../core/PolicyEngine.js";
+
+export async function determineApprovalLevel(invoiceTotal, organization_id) {
+
+  const policyRows = await PolicyEngine.getApprovalPolicy(organization_id);
+
+  for (const row of policyRows) {
+    if (
+      invoiceTotal >= row.min_amount &&
+      invoiceTotal <= row.max_amount
+    ) {
+      return row.approval_level;
     }
+  }
+
+  throw new Error("No approval level configured for this amount");
 }

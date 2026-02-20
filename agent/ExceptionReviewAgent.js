@@ -10,20 +10,24 @@ export default class ExceptionReviewAgent extends BaseAgent {
   async act() {
 
     const res = await pool.query(
-      `SELECT id, decision
-       FROM exception_review_decisions
-       WHERE invoice_id = $1
-       AND processed = false
-       ORDER BY decided_at DESC
-       LIMIT 1`,
-      [this.invoice_id]
+      `
+      SELECT id, decision
+      FROM exception_review_decisions
+      WHERE invoice_id = $1
+      AND organization_id = $2
+      AND processed = false
+      ORDER BY decided_at DESC
+      LIMIT 1
+      `,
+      [this.invoice_id, this.organization_id]
     );
 
     if (!res.rows.length) {
-      return { decisionFound: false };
+      return { success: true, decisionFound: false };
     }
 
     return {
+      success: true,
       decisionFound: true,
       decision: res.rows[0].decision,
       decisionId: res.rows[0].id
@@ -32,18 +36,28 @@ export default class ExceptionReviewAgent extends BaseAgent {
 
   async evaluate(observation) {
 
+    if (!observation?.success) {
+      return {
+        nextState: "EXCEPTION_REVIEW",
+        reason: "Decision lookup failed"
+      };
+    }
+
     if (!observation.decisionFound) {
       return {
         nextState: "EXCEPTION_REVIEW"
       };
     }
 
-    // Mark only this decision row as processed
+    // Tenant-safe decision processing
     await pool.query(
-      `UPDATE exception_review_decisions
-       SET processed = true
-       WHERE id = $1`,
-      [observation.decisionId]
+      `
+      UPDATE exception_review_decisions
+      SET processed = true
+      WHERE id = $1
+      AND organization_id = $2
+      `,
+      [observation.decisionId, this.organization_id]
     );
 
     if (observation.decision === "APPROVE") {

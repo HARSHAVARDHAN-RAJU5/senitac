@@ -1,13 +1,17 @@
 import pool from "../db.js";
 import { runApproval } from "../Execution layer/step6-approval/services/approvalService.js";
 
-export async function execute(invoice_id) {
+export async function execute(invoice_id, organization_id) {
 
+  // Validate state (tenant isolated)
   const stateCheck = await pool.query(
-    `SELECT current_state
-     FROM invoice_state_machine
-     WHERE invoice_id = $1`,
-    [invoice_id]
+    `
+    SELECT current_state
+    FROM invoice_state_machine
+    WHERE invoice_id = $1
+    AND organization_id = $2
+    `,
+    [invoice_id, organization_id]
   );
 
   if (!stateCheck.rows.length) {
@@ -18,7 +22,9 @@ export async function execute(invoice_id) {
     throw new Error("Invalid state for ApprovalWorker");
   }
 
-  const approvalResult = await runApproval(invoice_id);
+  // Run approval service (tenant-aware)
+  const approvalResult = await runApproval(invoice_id, organization_id);
 
-  return approvalResult; // No nextState here
+  // Worker returns signals only
+  return approvalResult;
 }

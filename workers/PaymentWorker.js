@@ -1,15 +1,21 @@
 import pool from "../db.js";
 import { runPaymentScheduling } from "../Execution layer/step7-payment/services/paymentService.js";
 
-export async function execute(invoice_id) {
+export async function execute(invoice_id, organization_id) {
 
+  if (!invoice_id || !organization_id) {
+    throw new Error("PaymentWorker requires invoice_id and organization_id");
+  }
+
+  // Tenant isolated state check
   const stateCheck = await pool.query(
     `
-      SELECT current_state
-      FROM invoice_state_machine
-      WHERE invoice_id = $1
+    SELECT current_state
+    FROM invoice_state_machine
+    WHERE invoice_id = $1
+    AND organization_id = $2
     `,
-    [invoice_id]
+    [invoice_id, organization_id]
   );
 
   if (!stateCheck.rows.length) {
@@ -23,19 +29,27 @@ export async function execute(invoice_id) {
     throw new Error("Invalid state for PaymentWorker");
   }
 
-  // Phase 1 → Create payment schedule
   if (currentState === "APPROVED") {
 
-    const paymentResult = await runPaymentScheduling(invoice_id);
+    const paymentResult = await runPaymentScheduling(
+      invoice_id,
+      organization_id
+    );
 
-    if (!paymentResult || paymentResult.success !== true) {
-      return { nextState: "BLOCKED" };
+    if (!paymentResult?.success) {
+      return {
+        success: false,
+        nextState: "BLOCKED",
+        reason: paymentResult?.reason || "Payment scheduling failed"
+      };
     }
 
-    return { nextState: "PAYMENT_READY" };
+    return {
+      success: true,
+      nextState: "PAYMENT_READY"
+    };
   }
 
-  // Phase 2 → Execute payment (simulated for now)
   if (currentState === "PAYMENT_READY") {
 
     await pool.query(
@@ -44,10 +58,14 @@ export async function execute(invoice_id) {
       SET payment_status = 'PAID',
           paid_at = NOW()
       WHERE invoice_id = $1
+      AND organization_id = $2
       `,
-      [invoice_id]
+      [invoice_id, organization_id]
     );
 
-    return { nextState: "COMPLETED" };
+    return {
+      success: true,
+      nextState: "COMPLETED"
+    };
   }
 }

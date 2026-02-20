@@ -11,19 +11,27 @@ export async function handleInvoiceIntake({
   file,
   source,
   receivedFrom,
+  organization_id,
   extraMetadata = {}
 }) {
+
   if (!file || !file.buffer) {
     throw new Error("Invalid file input");
   }
 
+  if (!organization_id) {
+    throw new Error("organization_id is required");
+  }
+
   const invoiceId = `inv_${randomUUID()}`;
 
+  // Org isolated storage path
   const invoiceDir = path.join(
     __dirname,
     "..",
     "storage",
     "invoices",
+    organization_id,
     invoiceId
   );
 
@@ -39,10 +47,12 @@ export async function handleInvoiceIntake({
   try {
     await client.query("BEGIN");
 
+    // ✅ Multi-tenant safe insert
     await client.query(
       `
       INSERT INTO invoices (
         invoice_id,
+        organization_id,
         source,
         received_from,
         original_filename,
@@ -52,33 +62,40 @@ export async function handleInvoiceIntake({
         status,
         received_at
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       `,
       [
         invoiceId,
+        organization_id,
         source,
         receivedFrom,
         file.originalname,
         originalFilePath,
         file.mimetype,
         file.size,
-        "received",
+        "RECEIVED",
         receivedAt
       ]
     );
 
+    // ✅ Multi-tenant state machine
     await client.query(
       `
-      INSERT INTO invoice_state_machine (invoice_id, current_state)
-      VALUES ($1, $2)
+      INSERT INTO invoice_state_machine (
+        invoice_id,
+        organization_id,
+        current_state
+      )
+      VALUES ($1, $2, $3)
       `,
-      [invoiceId, "RECEIVED"]
+      [invoiceId, organization_id, "RECEIVED"]
     );
 
     await client.query("COMMIT");
 
     return {
       invoice_id: invoiceId,
+      organization_id,
       status: "RECEIVED",
       received_at: receivedAt.toISOString()
     };

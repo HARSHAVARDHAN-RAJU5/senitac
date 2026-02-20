@@ -32,22 +32,46 @@ const STATE_TRANSITIONS = {
   PAYMENT_READY: ["COMPLETED"]
 };
 
-async function logAudit(invoice_id, old_state, new_state, reason = null) {
+async function logAudit(
+  invoice_id,
+  organization_id,
+  old_state,
+  new_state,
+  reason = null
+) {
   await pool.query(
-    `INSERT INTO audit_event_log
-     (invoice_id, old_state, new_state, reason)
-     VALUES ($1, $2, $3, $4)`,
-    [invoice_id, old_state, new_state, reason]
+    `
+    INSERT INTO audit_event_log
+    (invoice_id, organization_id, old_state, new_state, reason)
+    VALUES ($1, $2, $3, $4, $5)
+    `,
+    [invoice_id, organization_id, old_state, new_state, reason]
   );
 }
 
-async function processInvoice(invoice_id) {
+async function getMaxRetryLimit(organization_id) {
+  const policyRes = await pool.query(
+    `
+    SELECT max_retry_count
+    FROM payment_policy_config
+    WHERE organization_id = $1
+    `,
+    [organization_id]
+  );
+
+  return policyRes.rows[0]?.max_retry_count ?? 2; // default fallback
+}
+
+async function processInvoice(invoice_id, organization_id) {
 
   const stateRes = await pool.query(
-    `SELECT current_state, retry_count
-     FROM invoice_state_machine
-     WHERE invoice_id = $1`,
-    [invoice_id]
+    `
+    SELECT current_state, retry_count
+    FROM invoice_state_machine
+    WHERE invoice_id = $1
+    AND organization_id = $2
+    `,
+    [invoice_id, organization_id]
   );
 
   if (!stateRes.rows.length) {
@@ -56,9 +80,10 @@ async function processInvoice(invoice_id) {
   }
 
   const { current_state, retry_count } = stateRes.rows[0];
+
   console.log("Current State:", current_state);
 
-  // Terminal pause states
+  // Terminal states
   if (
     current_state === "COMPLETED" ||
     current_state === "BLOCKED" ||
@@ -68,47 +93,73 @@ async function processInvoice(invoice_id) {
     return;
   }
 
-  // Retry guard
-  if (retry_count >= 3) {
-    await pool.query(
-      `UPDATE invoice_state_machine
-       SET current_state = 'BLOCKED',
-           last_updated = NOW()
-       WHERE invoice_id = $1`,
-      [invoice_id]
-    );
-
-    await logAudit(
-      invoice_id,
-      current_state,
-      "BLOCKED",
-      "RETRY_LIMIT_EXCEEDED"
-    );
-
-    console.log("Retry limit exceeded. Blocking invoice.");
-    return;
-  }
-
   try {
 
-    const supervisor = new SupervisorAgent(invoice_id);
+    const supervisor = new SupervisorAgent(
+      invoice_id,
+      organization_id
+    );
+
     const result = await supervisor.executeStep();
 
-    if (!result || !result.decision) {
-      console.log("No decision returned. Staying in:", current_state);
+    if (!result?.decision) {
+      console.log("No decision returned.");
       return;
     }
 
     const decision = result.decision;
 
-    if (!decision.nextState) {
-      console.log("No nextState provided. Staying in:", current_state);
+    if (decision.retry === true) {
+
+      const maxRetry = await getMaxRetryLimit(organization_id);
+
+      if (retry_count >= maxRetry) {
+
+        await pool.query(
+          `
+          UPDATE invoice_state_machine
+          SET current_state = 'BLOCKED',
+              last_updated = NOW()
+          WHERE invoice_id = $1
+          AND organization_id = $2
+          `,
+          [invoice_id, organization_id]
+        );
+
+        await logAudit(
+          invoice_id,
+          organization_id,
+          current_state,
+          "BLOCKED",
+          "RETRY_LIMIT_EXCEEDED"
+        );
+
+        console.log("Retry limit exceeded → BLOCKED");
+        return;
+      }
+
+      await pool.query(
+        `
+        UPDATE invoice_state_machine
+        SET retry_count = retry_count + 1,
+            last_updated = NOW()
+        WHERE invoice_id = $1
+        AND organization_id = $2
+        `,
+        [invoice_id, organization_id]
+      );
+
+      console.log("Retry incremented.");
       return;
     }
 
-    // Prevent infinite self-loop re-emission
+    if (!decision.nextState) {
+      console.log("No nextState provided.");
+      return;
+    }
+
     if (decision.nextState === current_state) {
-      console.log("No state change. Staying in:", current_state);
+      console.log("No state change.");
       return;
     }
 
@@ -121,16 +172,20 @@ async function processInvoice(invoice_id) {
     }
 
     await pool.query(
-      `UPDATE invoice_state_machine
-       SET current_state = $1,
-           retry_count = 0,
-           last_updated = NOW()
-       WHERE invoice_id = $2`,
-      [decision.nextState, invoice_id]
+      `
+      UPDATE invoice_state_machine
+      SET current_state = $1,
+          retry_count = 0,
+          last_updated = NOW()
+      WHERE invoice_id = $2
+      AND organization_id = $3
+      `,
+      [decision.nextState, invoice_id, organization_id]
     );
 
     await logAudit(
       invoice_id,
+      organization_id,
       current_state,
       decision.nextState,
       decision.reason || null
@@ -138,40 +193,47 @@ async function processInvoice(invoice_id) {
 
     console.log("Moved to:", decision.nextState);
 
-    // Send notification if WAITING_INFO
+    // WAITING_INFO notification
     if (decision.nextState === "WAITING_INFO") {
       await NotificationWorker.execute(
         invoice_id,
+        organization_id,
         decision.reason
       );
+      return;
     }
 
-    // Only emit if real forward movement and not terminal
+    // Emit next event
     if (
-      decision.nextState !== "WAITING_INFO" &&
       decision.nextState !== "BLOCKED" &&
       decision.nextState !== "COMPLETED"
     ) {
-      await redis.xAdd("invoice_events", "*", { invoice_id });
+      await redis.xAdd("invoice_events", "*", {
+        invoice_id,
+        organization_id
+      });
     }
 
   } catch (err) {
 
-    console.error("Supervisor failed:", err.message);
+    console.error("Supervisor failure:", err.message);
 
     await pool.query(
-      `UPDATE invoice_state_machine
-       SET retry_count = retry_count + 1,
-           last_updated = NOW()
-       WHERE invoice_id = $1`,
-      [invoice_id]
+      `
+      UPDATE invoice_state_machine
+      SET retry_count = retry_count + 1,
+          last_updated = NOW()
+      WHERE invoice_id = $1
+      AND organization_id = $2
+      `,
+      [invoice_id, organization_id]
     );
   }
 }
 
 async function listen() {
 
-  console.log("Orchestrator connected to Redis & Postgres");
+  console.log("Orchestrator running...");
 
   while (true) {
 
@@ -193,11 +255,11 @@ async function listen() {
       if (!response) continue;
 
       const message = response[0].messages[0];
-      const { invoice_id } = message.message;
+      const { invoice_id, organization_id } = message.message;
 
       console.log("Event received:", invoice_id);
 
-      await processInvoice(invoice_id);
+      await processInvoice(invoice_id, organization_id);
 
       await redis.xAck(
         "invoice_events",

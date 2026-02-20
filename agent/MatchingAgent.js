@@ -23,7 +23,11 @@ export default class MatchingAgent extends BaseAgent {
   }
 
   async act() {
-    return await Worker.execute(this.invoice_id);
+    // ORG-SAFE CALL
+    return await Worker.execute(
+      this.invoice_id,
+      this.organization_id
+    );
   }
 
   async evaluate(observation) {
@@ -64,11 +68,9 @@ Format:
 
     console.log("LLM RAW:", raw);
 
-    // Try extracting JSON block safely
     const jsonBlock = extractJSON(raw);
 
     if (!jsonBlock) {
-      console.error("No JSON found in LLM output");
       return {
         nextState: "BLOCKED",
         reason: "Invalid LLM output format"

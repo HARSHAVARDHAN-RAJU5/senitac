@@ -49,20 +49,16 @@ Instructions:
 }
 
 
-export async function execute(invoiceId, reason) {
+export async function execute(invoiceId, organization_id, reason) {
 
-  // ===============================
-  // Generate Secure Token
-  // ===============================
+  if (!invoiceId || !organization_id) {
+    throw new Error("NotificationWorker requires invoiceId and organization_id");
+  }
 
   const token = crypto.randomBytes(32).toString("hex");
 
   const recoveryLink =
-    `https://yourdomain.com/api/recovery/upload?token=${token}`;
-
-  // ===============================
-  // Persist WAITING_INFO Metadata
-  // ===============================
+    `https://yourdomain.com/${organization_id}/api/recovery/upload?token=${token}`;
 
   await pool.query(
     `
@@ -74,23 +70,23 @@ export async function execute(invoiceId, reason) {
         waiting_reason = $2,
         last_updated = NOW()
     WHERE invoice_id = $3
+    AND organization_id = $4
     `,
-    [token, reason, invoiceId]
+    [token, reason, invoiceId, organization_id]
   );
-
-  // ===============================
-  // Build Issue Context
-  // ===============================
 
   let issueContext = reason;
 
   try {
 
     const validationRes = await pool.query(
-      `SELECT legal_status, bank_status, tax_status
-       FROM invoice_validation_results
-       WHERE invoice_id = $1`,
-      [invoiceId]
+      `
+      SELECT legal_status, bank_status, tax_status
+      FROM invoice_validation_results
+      WHERE invoice_id = $1
+      AND organization_id = $2
+      `,
+      [invoiceId, organization_id]
     );
 
     if (validationRes.rows.length) {
@@ -107,13 +103,8 @@ Vendor Validation Summary:
     }
 
   } catch (err) {
-    // If validation lookup fails, continue with base reason
     console.error("Validation context fetch failed:", err.message);
   }
-
-  // ===============================
-  // Generate Email (LLM + Fallback)
-  // ===============================
 
   let emailBody;
 
@@ -144,10 +135,6 @@ Regards,
 Accounts Payable Team
 `;
   }
-
-  // ===============================
-  // Send Email (Replace with real service)
-  // ===============================
 
   console.log("Sending vendor notification for invoice:", invoiceId);
   console.log(emailBody);

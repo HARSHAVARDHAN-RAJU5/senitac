@@ -5,11 +5,11 @@ function normalizeCompare(value) {
   return value.trim().toUpperCase();
 }
 
-async function validateVendor(invoiceId) {
+async function validateVendor(invoiceId, organization_id) {
 
   const extractedResult = await db.query(
-    "SELECT data, extraction_status FROM invoice_extracted_data WHERE invoice_id = $1",
-    [invoiceId]
+    "SELECT data, extraction_status FROM invoice_extracted_data WHERE invoice_id = $1 AND organization_id = $2",
+    [invoiceId, organization_id = $2]
   );
 
   if (!extractedResult.rows.length) {
@@ -40,8 +40,8 @@ async function validateVendor(invoiceId) {
   }
 
   const vendorResult = await db.query(
-    "SELECT * FROM vendor_master WHERE tax_id = $1",
-    [taxId]
+    "SELECT * FROM vendor_master WHERE tax_id = $1 AND organization_id = $2",
+    [taxId, organization_id]
   );
 
   if (!vendorResult.rows.length) {
@@ -82,8 +82,8 @@ async function validateVendor(invoiceId) {
 
   await db.query(
     `INSERT INTO invoice_validation_results 
-     (invoice_id, vendor_id, legal_status, tax_status, bank_status, overall_status, validated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,NOW())
+     (invoice_id, organization_id, vendor_id, legal_status, tax_status, bank_status, overall_status, validated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
      ON CONFLICT (invoice_id) DO UPDATE SET
        legal_status = EXCLUDED.legal_status,
        tax_status = EXCLUDED.tax_status,
@@ -92,6 +92,7 @@ async function validateVendor(invoiceId) {
        validated_at = NOW()`,
     [
       invoiceId,
+      organization_id,
       vendor.vendor_id,
       legalStatus,
       taxStatus,
