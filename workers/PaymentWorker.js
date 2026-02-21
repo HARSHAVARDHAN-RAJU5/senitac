@@ -1,5 +1,5 @@
 import pool from "../db.js";
-import { runPaymentScheduling } from "../Execution layer/step7-payment/services/paymentService.js";
+import { runPaymentScheduling } from "../modules/step7-payment/services/paymentService.js";
 
 export async function execute(context) {
 

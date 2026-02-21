@@ -1,5 +1,5 @@
 import pool from "../db.js";
-import extractAndStructure from "../Execution layer/step2-extraction/services/extractionService.js";
+import extractAndStructure from "../modules/step2-extraction/services/extractionService.js";
 
 export async function execute(context) {
 

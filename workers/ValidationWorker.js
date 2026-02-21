@@ -1,5 +1,5 @@
 import pool from "../db.js";
-import validateVendor from "../Execution layer/step3-validation/services/servicesValidation.js";
+import validateVendor from "../modules/step3-validation/services/servicesValidation.js";
 
 export async function execute(context) {
 

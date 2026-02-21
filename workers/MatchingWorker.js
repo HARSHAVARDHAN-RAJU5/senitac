@@ -1,5 +1,5 @@
-import { runMatching } from "../Execution layer/step4-matching/services/servicesMatching.js";
-import { runCompliance } from "../Execution layer/step5-compliance/services/servicesCompliance.js";
+import { runMatching } from "../modules/step4-matching/services/servicesMatching.js";
+import { runCompliance } from "../modules/step5-compliance/services/servicesCompliance.js";
 
 export async function execute(context) {
 

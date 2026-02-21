@@ -1,5 +1,5 @@
 import pool from "../db.js";
-import { runApproval } from "../Execution layer/step6-approval/services/approvalService.js";
+import { runApproval } from "../modules/step6-approval/services/approvalService.js";
 
 export async function execute(context) {
 
