@@ -7,6 +7,7 @@ import SupervisorAgent from "./agent/SupervisorAgent.js";
 import * as NotificationWorker from "./workers/NotificationWorker.js";
 import PolicyEngine from "./engine/PolicyEngine.js";
 import { reflect } from "./core/ReflectionService.js";
+import AccountingWorker from "./step8-accounting/AccountingWorker.js";
 
 const redis = createClient({
   url: "redis://127.0.0.1:6379"
@@ -203,6 +204,7 @@ async function processInvoice(invoice_id, organization_id) {
       );
     }
 
+    // --- STATE UPDATE ---
     await pool.query(
       `
       UPDATE invoice_state_machine
@@ -224,6 +226,38 @@ async function processInvoice(invoice_id, organization_id) {
     );
 
     console.log("Moved to:", decision.nextState);
+
+    // --- ACCOUNTING HOOK ---
+    if (decision.nextState === "APPROVED") {
+      try {
+        await AccountingWorker.postAccrual(context);
+        console.log("Accrual journal booked.");
+      } catch (accountingError) {
+
+        console.error("Accounting failure:", accountingError.message);
+
+        await pool.query(
+          `
+          UPDATE invoice_state_machine
+          SET current_state = 'EXCEPTION_REVIEW',
+              last_updated = NOW()
+          WHERE invoice_id = $1
+            AND organization_id = $2
+          `,
+          [invoice_id, organization_id]
+        );
+
+        await logAudit(
+          invoice_id,
+          organization_id,
+          "APPROVED",
+          "EXCEPTION_REVIEW",
+          "ACCOUNTING_FAILURE"
+        );
+
+        return;
+      }
+    }
 
     if (decision.nextState === "WAITING_INFO") {
 
