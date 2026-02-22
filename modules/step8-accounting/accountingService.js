@@ -2,8 +2,13 @@ import db from "../../db.js";
 
 class AccountingService {
 
+  // ===============================
+  // ACCOUNT MAPPING (with fallback)
+  // ===============================
   static async getAccountMapping(organization_id, expense_category) {
-    const result = await db.query(
+
+    // 1️⃣ Try exact category match
+    let result = await db.query(
       `
       SELECT expense_account_id, ap_account_id
       FROM account_mapping
@@ -13,6 +18,21 @@ class AccountingService {
       [organization_id, expense_category]
     );
 
+    if (result.rows.length > 0) {
+      return result.rows[0];
+    }
+
+    // 2️⃣ Fallback to GENERAL
+    result = await db.query(
+      `
+      SELECT expense_account_id, ap_account_id
+      FROM account_mapping
+      WHERE organization_id = $1
+        AND expense_category = 'GENERAL'
+      `,
+      [organization_id]
+    );
+
     if (result.rows.length === 0) {
       throw new Error("Account mapping not found");
     }
@@ -20,6 +40,9 @@ class AccountingService {
     return result.rows[0];
   }
 
+  // ===============================
+  // CREATE JOURNAL ENTRY
+  // ===============================
   static async createJournalEntry({ organization_id, invoice_id, entry_type }) {
     const result = await db.query(
       `
@@ -39,6 +62,9 @@ class AccountingService {
     return result.rows[0].journal_id;
   }
 
+  // ===============================
+  // CREATE JOURNAL LINE
+  // ===============================
   static async createJournalLine({
     journal_id,
     account_id,
@@ -59,6 +85,9 @@ class AccountingService {
     );
   }
 
+  // ===============================
+  // CHECK IF JOURNAL ALREADY EXISTS
+  // ===============================
   static async journalExists(organization_id, invoice_id, entry_type) {
     const result = await db.query(
       `

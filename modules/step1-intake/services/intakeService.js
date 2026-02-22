@@ -107,19 +107,18 @@ export async function handleInvoiceIntake({
     await client.query(
       `
       INSERT INTO audit_event_log (
-        invoice_id,
-        organization_id,
-        event_type,
-        severity,
-        description
+      invoice_id,
+      organization_id,
+      old_state,
+      new_state,
+      reason
       )
-      VALUES ($1,$2,$3,$4,$5)
-      `,
+      VALUES ($1,$2,$3,$4,$5)`,
       [
         invoiceId,
         organization_id,
-        "INVOICE_RECEIVED",
-        "INFO",
+        null,
+        "RECEIVED",
         "Invoice received and initialized"
       ]
     );
@@ -147,3 +146,4 @@ export async function handleInvoiceIntake({
     received_at: receivedAt.toISOString()
   };
 }
+export default handleInvoiceIntake;

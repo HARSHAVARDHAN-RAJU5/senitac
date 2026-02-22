@@ -1,5 +1,4 @@
 import db from "../../../db.js";
-import { determineApprovalLevel } from "./approvalRules.js";
 
 export async function runApproval(context) {
 
@@ -24,26 +23,24 @@ export async function runApproval(context) {
   );
 
   if (!invoiceRes.rows.length) {
-    return {
-      success: false,
-      reason: "Invoice data not found"
-    };
+    return { success: false, reason: "Invoice data not found" };
   }
 
   const invoiceData = invoiceRes.rows[0].data || {};
   const invoiceTotal = parseFloat(invoiceData.total_amount || 0);
 
   if (!invoiceTotal) {
-    return {
-      success: false,
-      reason: "Invoice total missing"
-    };
+    return { success: false, reason: "Invoice total missing" };
   }
 
-  const approvalLevel = determineApprovalLevel(
-    invoiceTotal,
-    config.approval
-  );
+  // Inline approval logic using DB config
+  let approvalLevel = "LEVEL_1";
+
+  if (invoiceTotal >= config.approval.high_value_threshold) {
+    approvalLevel = "LEVEL_3";
+  } else if (invoiceTotal >= config.approval.mid_value_threshold) {
+    approvalLevel = "LEVEL_2";
+  }
 
   await db.query(
     `

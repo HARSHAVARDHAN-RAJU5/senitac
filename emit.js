@@ -3,7 +3,7 @@ import Redis from "ioredis";
 const redis = new Redis();
 
 async function emit() {
-  const invoice_id = "INV-1002";
+  const invoice_id = "INV-1001";
 
   await redis.xadd(
     "invoice_events",

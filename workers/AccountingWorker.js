@@ -1,4 +1,4 @@
-import AccountingService from "./services/accountingService.js";
+import AccountingService from "../modules/step8-accounting/accountingService.js";
 import db from "../db.js";
 
 class AccountingWorker {
@@ -16,23 +16,24 @@ class AccountingWorker {
     if (alreadyBooked) {
       return;
     }
+// Fetch invoice financial details from extracted data
+const invoiceRes = await db.query(
+  `
+  SELECT 
+    (data->>'total_amount')::numeric AS total_amount,
+    (data->>'expense_category') AS expense_category
+  FROM invoice_extracted_data
+  WHERE invoice_id = $1
+    AND organization_id = $2
+  `,
+  [invoice_id, organization_id]
+);
 
-    // Fetch invoice details
-    const invoiceRes = await db.query(
-      `
-      SELECT total_amount, expense_category
-      FROM invoices
-      WHERE invoice_id = $1
-        AND organization_id = $2
-      `,
-      [invoice_id, organization_id]
-    );
+if (invoiceRes.rows.length === 0) {
+  throw new Error("Invoice extracted data not found for accounting");
+}
 
-    if (invoiceRes.rows.length === 0) {
-      throw new Error("Invoice not found for accounting");
-    }
-
-    const { total_amount, expense_category } = invoiceRes.rows[0];
+const { total_amount, expense_category } = invoiceRes.rows[0];
 
     // Get account mapping
     const { expense_account_id, ap_account_id } =

@@ -102,7 +102,8 @@ export const runMatching = async (context) => {
 
   // 6. Strict variance validation
   if (po) {
-    const poAmount = parseFloat(po.total_amount || 0);
+    const invoiceTotal = parseFloat(
+      invoice.subtotal ?? invoice.total_amount ?? 0);
     const variance = Math.abs(invoiceTotal - poAmount) / poAmount;
 
     if (variance > tolerance) {

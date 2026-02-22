@@ -1,13 +1,14 @@
 import express from "express";
 
 
-import invoiceIntakeRoutes from "./Execution layer/step1-intake/routes/invoiceIntake.js";
-import invoiceExtractionRoutes from "./Execution layer/step2-extraction/routes/invoiceExtraction.js";
-import invoiceValidationRoutes from "./Execution layer/step3-validation/routes/routesValidation.js";
-import invoiceMatchingRoutes from "./Execution layer/step4-matching/routes/routesMatching.js";
-import invoiceComplianceRoutes from "./Execution layer/step5-compliance/routes/routesCompliance.js";
-import invoiceApprovalRoutes from "./Execution layer/step6-approval/routes/approvalRoutes.js";
+import invoiceIntakeRoutes from "./modules/step1-intake/routes/invoiceIntake.js";
+import invoiceExtractionRoutes from "./modules/step2-extraction/routes/invoiceExtraction.js";
+import invoiceValidationRoutes from "./modules/step3-validation/routes/routesValidation.js";
+import invoiceMatchingRoutes from "./modules/step4-matching/routes/routesMatching.js";
+import invoiceComplianceRoutes from "./modules/step5-compliance/routes/routesCompliance.js";
+import invoiceApprovalRoutes from "./modules/step6-approval/routes/approvalRoutes.js";
 import exceptionReviewRoutes from "./routes/exceptionReviewRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
 
 const app = express();
 
@@ -32,6 +33,8 @@ app.use("/api/invoices/compliance", invoiceComplianceRoutes);
 app.use("/api/invoices/approval", invoiceApprovalRoutes);
 
 app.use("/api/exception-review", exceptionReviewRoutes);
+
+app.use("/api/payment", paymentRoutes);
 
 app.listen(3000, () => {
   console.log("Server running on port 3000");

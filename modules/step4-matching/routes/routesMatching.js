@@ -1,5 +1,5 @@
 import express from "express";
-import matchInvoice from "../services/servicesMatching.js";
+import { runMatching } from "../services/servicesMatching.js";
 
 const router = express.Router();
 
@@ -7,7 +7,7 @@ router.post("/:invoice_id", async (req, res) => {
   try {
     const invoiceId = req.params.invoice_id;
 
-    const result = await matchInvoice(invoiceId);
+    const result = await runMatching(invoiceId);
 
     res.json(result);
 

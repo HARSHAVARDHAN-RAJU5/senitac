@@ -41,22 +41,22 @@ export async function reflect(context, currentState) {
 
   try {
 
-    // Fetch vendor_id from invoice
-    const invoiceRes = await pool.query(
+    // Fetch vendor_id from validation results
+    const vendorRes = await pool.query(
       `
       SELECT vendor_id
-      FROM invoices
+      FROM invoice_validation_results
       WHERE invoice_id = $1
-        AND organization_id = $2
+      AND organization_id = $2
       `,
       [invoice_id, organization_id]
     );
 
-    if (!invoiceRes.rows.length) {
+    if (!vendorRes.rows.length) {
       return null;
     }
 
-    const vendor_id = invoiceRes.rows[0].vendor_id;
+    const vendor_id = vendorRes.rows[0].vendor_id;
 
     // Fetch recent agent history
     const history = await pool.query(
@@ -112,7 +112,6 @@ export async function reflect(context, currentState) {
       }
     }
 
-    // Store reflection log if triggered
     if (reflectionResult) {
 
       await pool.query(

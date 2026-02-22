@@ -1,22 +1,9 @@
 import fs from "fs";
-import pdf from "pdf-parse/lib/pdf-parse.js";
+import axios from "axios";
 import pool from "../../../db.js";
 
-function normalizeText(value) {
-  if (!value) return null;
-
-  return value
-    .replace(/\r/g, "")
-    .replace(/\s+/g, " ")
-    .replace(/^[^a-zA-Z0-9]+/, "")
-    .trim();
-}
-
-function extractFieldByLabel(text, label) {
-  const regex = new RegExp(`${label}\\s*:\\s*(.+)`, "i");
-  const match = text.match(regex);
-  return match ? normalizeText(match[1]) : null;
-}
+import pdfjs from "pdfjs-dist/legacy/build/pdf.js";
+const { getDocument } = pdfjs;
 
 async function extractAndStructure(context) {
 
@@ -47,36 +34,87 @@ async function extractAndStructure(context) {
   }
 
   const buffer = fs.readFileSync(filePath);
-  const pdfData = await pdf(buffer);
-  const text = pdfData.text;
+  const uint8Array = new Uint8Array(buffer);
 
-  const invoice_number = extractFieldByLabel(text, "Invoice Number");
-  const vendor_name = extractFieldByLabel(text, "Vendor Name");
-  const po_number = extractFieldByLabel(text, "PO Number");
+  const loadingTask = getDocument({ data: uint8Array });
+  const pdfDocument = await loadingTask.promise;
 
-  const gstinMatch =
-    text.match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]/);
+  let text = "";
 
-  const totalMatch =
-    text.match(/Total Amount\s*:\s*([\d,]+(\.\d+)?)/i);
+  for (let i = 1; i <= pdfDocument.numPages; i++) {
+    const page = await pdfDocument.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(" ");
+    text += "\n" + pageText;
+  }
 
-  const invoiceDateMatch =
-    text.match(/\b\d{4}\-\d{2}\-\d{2}\b/);
+  const prompt = `
+You are an AI invoice extraction engine.
 
-  const structured = {
-    invoice_number,
-    vendor_name,
-    gstin: gstinMatch?.[0] || null,
-    total_amount: totalMatch
-      ? parseFloat(totalMatch[1].replace(/,/g, ""))
-      : null,
-    invoice_date: invoiceDateMatch?.[0] || null,
-    po_number,
-    extraction_type: "regex"
-  };
+Extract the following fields from the invoice text below.
+Return ONLY valid JSON. No explanation.
+
+Fields:
+- invoice_number
+- vendor_name
+- gstin
+- subtotal (number, before tax)
+- tax (number)
+- total_amount (number, after tax)
+- invoice_date
+- due_date
+- po_number
+
+If any numeric value contains currency symbols, remove them.
+If any field is missing, return null.
+
+Invoice Text:
+${text}
+`;
+
+  const response = await axios.post(
+    "http://127.0.0.1:11434/api/generate",
+    {
+      model: "llama3",
+      prompt,
+      stream: false
+    }
+  );
+
+  let structured;
+
+  try {
+    structured = JSON.parse(response.data.response);
+  } catch (err) {
+    return { success: false, failure_type: "AI_PARSE_ERROR" };
+  }
 
   if (!structured.invoice_number || !structured.total_amount) {
     return { success: false, failure_type: "STRUCTURED_FIELDS_MISSING" };
+  }
+
+  // Normalize numeric fields
+  structured.total_amount = structured.total_amount
+    ? Number(structured.total_amount)
+    : null;
+
+  structured.subtotal = structured.subtotal
+    ? Number(structured.subtotal)
+    : null;
+
+  structured.tax = structured.tax
+    ? Number(structured.tax)
+    : null;
+
+  // Fallback derivation logic (GST 18% assumption if missing)
+  if (structured.total_amount && !structured.subtotal && !structured.tax) {
+    const derivedSubtotal = structured.total_amount / 1.18;
+    structured.subtotal = Math.round(derivedSubtotal);
+    structured.tax = structured.total_amount - structured.subtotal;
+  }
+
+  if (structured.subtotal && structured.tax && !structured.total_amount) {
+    structured.total_amount = structured.subtotal + structured.tax;
   }
 
   await pool.query(
@@ -95,7 +133,7 @@ async function extractAndStructure(context) {
 
   return {
     success: true,
-    outcome: "EXTRACTION_SUCCESS"
+    outcome: "AI_EXTRACTION_SUCCESS"
   };
 }
 

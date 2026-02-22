@@ -5,9 +5,9 @@ dotenv.config();
 
 import SupervisorAgent from "./agent/SupervisorAgent.js";
 import * as NotificationWorker from "./workers/NotificationWorker.js";
-import PolicyEngine from "./engine/PolicyEngine.js";
+import PolicyEngine from "./core/PolicyEngine.js";
 import { reflect } from "./core/ReflectionService.js";
-import AccountingWorker from "./step8-accounting/AccountingWorker.js";
+import AccountingWorker from "./workers/AccountingWorker.js";
 
 const redis = createClient({
   url: "redis://127.0.0.1:6379"
@@ -17,8 +17,7 @@ redis.on("error", (err) => {
   console.error("Redis Error:", err);
 });
 
-const STATE_TRANSITIONS = {
-  RECEIVED: ["STRUCTURED", "WAITING_INFO", "BLOCKED"],
+const STATE_TRANSITIONS = {  RECEIVED: ["STRUCTURED", "WAITING_INFO", "BLOCKED"],
   STRUCTURED: ["DUPLICATE_CHECK", "BLOCKED"],
   DUPLICATE_CHECK: ["VALIDATING", "BLOCKED"],
   VALIDATING: ["MATCHING", "WAITING_INFO", "BLOCKED"],
