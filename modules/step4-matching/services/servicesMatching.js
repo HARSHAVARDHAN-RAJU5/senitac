@@ -8,7 +8,7 @@ export const runMatching = async (context) => {
     throw new Error("runMatching requires invoice_id and organization_id");
   }
 
-  // 1. Check vendor validation
+  // 1️⃣ Vendor validation check
   const validationRes = await db.query(
     `
     SELECT overall_status, vendor_id, bank_status
@@ -28,7 +28,7 @@ export const runMatching = async (context) => {
 
   const { vendor_id, bank_status } = validationRes.rows[0];
 
-  // 2. Fetch extracted invoice data
+  // 2️⃣ Extract invoice data
   const invoiceRes = await db.query(
     `
     SELECT data
@@ -44,10 +44,14 @@ export const runMatching = async (context) => {
   }
 
   const invoice = invoiceRes.rows[0].data || {};
-  const invoiceTotal = parseFloat(invoice.total_amount || 0);
+
+  const invoiceSubtotal = parseFloat(invoice.subtotal || 0);
   const poNumber = invoice.po_number || null;
 
-  // 3. Use injected matching tolerance
+  if (!invoiceSubtotal) {
+    return { success: false, reason: "Invoice subtotal missing" };
+  }
+
   const tolerance =
     config?.matching?.price_variance_percentage ?? 0.02;
 
@@ -56,7 +60,7 @@ export const runMatching = async (context) => {
   let price_variance_flag = false;
   const bank_mismatch_flag = bank_status === "MISMATCH";
 
-  // 4. Direct PO number match
+  // 3️⃣ Direct PO number match
   if (poNumber) {
     const poRes = await db.query(
       `
@@ -73,7 +77,7 @@ export const runMatching = async (context) => {
     }
   }
 
-  // 5. Fallback: vendor + tolerance match
+  // 4️⃣ Fallback: vendor + tolerance match (using subtotal)
   if (!po) {
     const vendorPOs = await db.query(
       `
@@ -89,7 +93,9 @@ export const runMatching = async (context) => {
       const poAmount = parseFloat(p.total_amount || 0);
       if (!poAmount) return false;
 
-      const variance = Math.abs(invoiceTotal - poAmount) / poAmount;
+      const variance =
+        Math.abs(invoiceSubtotal - poAmount) / poAmount;
+
       return variance <= tolerance;
     });
 
@@ -100,18 +106,25 @@ export const runMatching = async (context) => {
     }
   }
 
-  // 6. Strict variance validation
+  // 5️⃣ Strict variance check
   if (po) {
-    const invoiceTotal = parseFloat(
-      invoice.subtotal ?? invoice.total_amount ?? 0);
-    const variance = Math.abs(invoiceTotal - poAmount) / poAmount;
 
-    if (variance > tolerance) {
+    const poAmount = parseFloat(po.total_amount || 0);
+
+    if (!poAmount) {
       price_variance_flag = true;
+    } else {
+
+      const variance =
+        Math.abs(invoiceSubtotal - poAmount) / poAmount;
+
+      if (variance > tolerance) {
+        price_variance_flag = true;
+      }
     }
   }
 
-  // 7. Persist results
+  // 6️⃣ Persist results
   await db.query(
     `
     INSERT INTO invoice_po_matching_results

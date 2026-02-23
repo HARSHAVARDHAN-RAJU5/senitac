@@ -20,7 +20,7 @@ redis.on("error", (err) => {
 const STATE_TRANSITIONS = {  RECEIVED: ["STRUCTURED", "WAITING_INFO", "BLOCKED"],
   STRUCTURED: ["DUPLICATE_CHECK", "BLOCKED"],
   DUPLICATE_CHECK: ["VALIDATING", "BLOCKED"],
-  VALIDATING: ["MATCHING", "WAITING_INFO", "BLOCKED"],
+  VALIDATING: ["MATCHING", "WAITING_INFO", "BLOCKED","EXCEPTION_REVIEW" ],
   MATCHING: [
     "PENDING_APPROVAL",
     "WAITING_INFO",
@@ -47,7 +47,7 @@ async function logAudit(
     (invoice_id, organization_id, old_state, new_state, reason)
     VALUES ($1, $2, $3, $4, $5)
     `,
-    [invoice_id, organization_id, old_state, new_state, reason]
+    [invoice_id, organization_id, old_state, new_state, reason || null]
   );
 }
 

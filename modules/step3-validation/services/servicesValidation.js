@@ -5,13 +5,14 @@ function normalizeCompare(value) {
   return value.trim().toUpperCase();
 }
 
+function toNumber(value) {
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
 async function validateVendor(context) {
 
   const { invoice_id, organization_id } = context;
-
-  if (!invoice_id || !organization_id) {
-    throw new Error("validateVendor requires invoice_id and organization_id");
-  }
 
   const extractedResult = await db.query(
     `
@@ -41,6 +42,22 @@ async function validateVendor(context) {
 
   const extracted = extractedResult.rows[0].data || {};
 
+  const subtotal = toNumber(extracted.subtotal);
+  const tax = toNumber(extracted.tax);
+  const total = toNumber(extracted.total);
+
+  // 🔥 GOVERNANCE RULE: arithmetic integrity
+  if (subtotal && total) {
+    const calculated = subtotal + tax;
+    if (Math.abs(calculated - total) > 1) {
+      return {
+        success: true,
+        status: "EXCEPTION_REVIEW",
+        reason: "Financial mismatch: subtotal + tax does not equal total"
+      };
+    }
+  }
+
   const supplierName = normalizeCompare(
     extracted.supplier_name || extracted.vendor_name
   );
@@ -50,9 +67,6 @@ async function validateVendor(context) {
     extracted.supplier_gst ||
     extracted.gstin ||
     null;
-
-  const bankAccount =
-    extracted.bank_account || null;
 
   if (!taxId) {
     return {
@@ -82,48 +96,24 @@ async function validateVendor(context) {
 
   const vendor = vendorResult.rows[0];
 
-  let legalStatus = "MATCH";
-  let taxStatus = "MATCH";
-  let bankStatus = "MATCH";
+  let overallStatus = "VALID";
 
-  if (
-    supplierName &&
-    normalizeCompare(vendor.legal_name) !== supplierName
-  ) {
-    legalStatus = "MISMATCH";
+  if (normalizeCompare(vendor.legal_name) !== supplierName) {
+    overallStatus = "REVIEW_REQUIRED";
   }
 
   if (vendor.tax_id !== taxId) {
-    taxStatus = "MISMATCH";
-  }
-
-  if (
-    bankAccount &&
-    vendor.bank_account !== bankAccount
-  ) {
-    bankStatus = "MISMATCH";
-  }
-
-  let overallStatus = "VALID";
-
-  if (taxStatus === "MISMATCH") {
     overallStatus = "BLOCKED";
-  } else if (legalStatus === "MISMATCH") {
-    overallStatus = "REVIEW_REQUIRED";
   }
 
   await db.query(
     `
     INSERT INTO invoice_validation_results
       (invoice_id, organization_id, vendor_id,
-       legal_status, tax_status, bank_status,
        overall_status, validated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+    VALUES ($1,$2,$3,$4,NOW())
     ON CONFLICT (invoice_id, organization_id)
     DO UPDATE SET
-      legal_status = EXCLUDED.legal_status,
-      tax_status = EXCLUDED.tax_status,
-      bank_status = EXCLUDED.bank_status,
       overall_status = EXCLUDED.overall_status,
       validated_at = NOW()
     `,
@@ -131,9 +121,6 @@ async function validateVendor(context) {
       invoice_id,
       organization_id,
       vendor.vendor_id,
-      legalStatus,
-      taxStatus,
-      bankStatus,
       overallStatus
     ]
   );

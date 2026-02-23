@@ -33,7 +33,7 @@ export async function execute(context) {
 
   const invoice_number = data.invoice_number;
   const vendor_name = data.vendor_name;
-  const total_amount = data.total_amount;
+  const total_amount = data.total;
 
   if (!invoice_number || !vendor_name || !total_amount) {
     return {
@@ -44,24 +44,24 @@ export async function execute(context) {
   }
 
   // Tenant-isolated duplicate check
-  const duplicateCheck = await pool.query(
-    `
-    SELECT COUNT(*)
-    FROM invoice_extracted_data
-    WHERE organization_id = $1
-      AND data->>'invoice_number' = $2
-      AND data->>'vendor_name' = $3
-      AND (data->>'total_amount')::numeric = $4
-      AND invoice_id <> $5
-    `,
-    [
-      organization_id,
-      invoice_number,
-      vendor_name,
-      total_amount,
-      invoice_id
-    ]
-  );
+const duplicateCheck = await pool.query(
+  `
+  SELECT COUNT(*)
+  FROM invoice_extracted_data
+  WHERE organization_id = $1
+    AND data->>'invoice_number' = $2
+    AND data->>'vendor_name' = $3
+    AND (data->>'total')::numeric = $4
+    AND invoice_id <> $5
+  `,
+  [
+    organization_id,
+    invoice_number,
+    vendor_name,
+    total_amount,
+    invoice_id
+  ]
+);
 
   const count = parseInt(duplicateCheck.rows[0].count, 10);
 

@@ -10,61 +10,101 @@ export default class ValidationAgent extends BaseAgent {
   }
 
   async plan() {
-    return {
-      action: "RUN_VENDOR_VALIDATION"
-    };
+    return { action: "RUN_VENDOR_VALIDATION" };
   }
 
-  async act(plan) {
+  async act() {
     return await ValidationWorker(this.context);
   }
 
   async evaluate(result) {
 
-    if (!result || result.success === false) {
-      return { nextState: "BLOCKED" };
+    if (!result) {
+      return {
+        nextState: "BLOCKED",
+        reason: "Validation worker returned no result"
+      };
+    }
+
+    if (result.success === false) {
+      return {
+        nextState: "BLOCKED",
+        reason: result.reason || "Validation failed"
+      };
+    }
+
+    // 🔥 Direct governance route
+    if (result.status === "EXCEPTION_REVIEW") {
+      return {
+        nextState: "EXCEPTION_REVIEW",
+        reason: result.reason
+      };
     }
 
     if (result.status === "BLOCKED") {
-      return { nextState: "BLOCKED" };
+      return {
+        nextState: "BLOCKED",
+        reason: result.reason || "Validation rule blocked invoice"
+      };
     }
 
     if (result.status === "VALID") {
-      return { nextState: "MATCHING" };
+      return {
+        nextState: "MATCHING",
+        reason: "Validation successful"
+      };
     }
 
-    // LLM reasoning for REVIEW_REQUIRED
     if (result.status === "REVIEW_REQUIRED") {
 
       const context = await this.buildRiskContext();
-
       const llmDecision = await this.callLLM(context);
 
       if (llmDecision === "PROCEED") {
-        return { nextState: "MATCHING" };
+        return {
+          nextState: "MATCHING",
+          reason: "LLM approved invoice after review"
+        };
       }
 
       if (llmDecision === "WAIT") {
-        return { nextState: "WAITING_INFO" };
+        return {
+          nextState: "WAITING_INFO",
+          reason: "LLM requested additional vendor information"
+        };
       }
 
-      return { nextState: "BLOCKED" };
+      return {
+        nextState: "BLOCKED",
+        reason: "LLM flagged invoice as high risk"
+      };
     }
 
-    return { nextState: "BLOCKED" };
+    return {
+      nextState: "BLOCKED",
+      reason: "Unhandled validation state"
+    };
   }
 
   async buildRiskContext() {
 
     const extracted = await pool.query(
-      `SELECT data FROM invoice_extracted_data 
-       WHERE invoice_id = $1 AND organization_id = $2`,
+      `
+      SELECT data
+      FROM invoice_extracted_data 
+      WHERE invoice_id = $1 
+        AND organization_id = $2
+      `,
       [this.invoice_id, this.organization_id]
     );
 
     const validation = await pool.query(
-      `SELECT * FROM invoice_validation_results 
-       WHERE invoice_id = $1 AND organization_id = $2`,
+      `
+      SELECT *
+      FROM invoice_validation_results 
+      WHERE invoice_id = $1 
+        AND organization_id = $2
+      `,
       [this.invoice_id, this.organization_id]
     );
 
@@ -84,17 +124,15 @@ Given this invoice validation result:
 ${JSON.stringify(context)}
 
 Decide:
-- PROCEED (safe to continue)
-- WAIT (needs more info from vendor)
-- BLOCK (likely fraud)
+- PROCEED
+- WAIT
+- BLOCK
 
-Respond with only one word: PROCEED / WAIT / BLOCK.
+Respond with only one word.
 `;
 
-    let response;
-
     try {
-      response = await axios.post(
+      const response = await axios.post(
         "http://127.0.0.1:11434/api/generate",
         {
           model: "llama3",
@@ -102,17 +140,17 @@ Respond with only one word: PROCEED / WAIT / BLOCK.
           stream: false
         }
       );
-    } catch (err) {
+
+      const output = response.data?.response?.trim()?.toUpperCase();
+
+      if (!output) return "BLOCK";
+      if (output.includes("PROCEED")) return "PROCEED";
+      if (output.includes("WAIT")) return "WAIT";
+
+      return "BLOCK";
+
+    } catch {
       return "BLOCK";
     }
-
-    const output = response.data?.response?.trim()?.toUpperCase();
-
-    if (!output) return "BLOCK";
-
-    if (output.includes("PROCEED")) return "PROCEED";
-    if (output.includes("WAIT")) return "WAIT";
-
-    return "BLOCK";
   }
 }

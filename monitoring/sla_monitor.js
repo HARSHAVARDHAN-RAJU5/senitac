@@ -16,7 +16,7 @@ console.log("Unified SLA Governance Monitor started...");
 setInterval(async () => {
   try {
 
-    // Load all active SLA rules
+    // Load active SLA rules
     const slaRules = await pool.query(`
       SELECT organization_id, state_name, sla_days, escalation_level
       FROM sla_config
@@ -29,6 +29,7 @@ setInterval(async () => {
 
       const { organization_id, state_name, sla_days, escalation_level } = rule;
 
+      // PAYMENT_READY → AUTO EXECUTE PAYMENT
       if (state_name === "PAYMENT_READY" && escalation_level === "EXECUTE_PAYMENT") {
 
         const duePayments = await pool.query(
@@ -50,11 +51,11 @@ setInterval(async () => {
 
           const { payment_id, invoice_id } = payment;
 
-          // Use transaction for safety
           const client = await pool.connect();
           try {
             await client.query("BEGIN");
 
+            // Mark payment completed
             await client.query(
               `
               UPDATE invoice_payment_schedule
@@ -65,6 +66,7 @@ setInterval(async () => {
               [payment_id]
             );
 
+            // Move invoice to COMPLETED
             await client.query(
               `
               UPDATE invoice_state_machine
@@ -76,18 +78,19 @@ setInterval(async () => {
               [invoice_id, organization_id]
             );
 
+            // Audit log
             await client.query(
               `
               INSERT INTO audit_event_log
-              (invoice_id, organization_id, event_type, severity, description)
+              (invoice_id, organization_id, old_state, new_state, reason)
               VALUES ($1,$2,$3,$4,$5)
               `,
               [
                 invoice_id,
                 organization_id,
-                "PAYMENT_EXECUTED",
-                "INFO",
-                "Payment executed on due date"
+                "PAYMENT_READY",
+                "COMPLETED",
+                "Auto payment executed by SLA monitor"
               ]
             );
 
@@ -103,23 +106,16 @@ setInterval(async () => {
           }
         }
 
-        continue; // skip normal SLA logic
+        continue;
       }
-
-
+      // GENERIC SLA BREACH CHECK
       const overdue = await pool.query(
         `
-        SELECT invoice_id
+        SELECT invoice_id, organization_id
         FROM invoice_state_machine
         WHERE organization_id = $1
           AND current_state = $2
           AND last_updated < NOW() - ($3 || ' days')::interval
-          AND NOT EXISTS (
-            SELECT 1 FROM audit_event_log a
-            WHERE a.invoice_id = invoice_state_machine.invoice_id
-              AND a.organization_id = invoice_state_machine.organization_id
-              AND a.event_type = 'SLA_BREACH'
-          )
         `,
         [organization_id, state_name, sla_days]
       );
@@ -132,6 +128,7 @@ setInterval(async () => {
 
         // AUTO BLOCK
         if (escalation_level === "AUTO_BLOCK") {
+
           await pool.query(
             `
             UPDATE invoice_state_machine
@@ -142,9 +139,24 @@ setInterval(async () => {
             `,
             [invoice_id, organization_id]
           );
+
+          await pool.query(
+            `
+            INSERT INTO audit_event_log
+            (invoice_id, organization_id, old_state, new_state, reason)
+            VALUES ($1,$2,$3,$4,$5)
+            `,
+            [
+              invoice_id,
+              organization_id,
+              state_name,
+              "BLOCKED",
+              `SLA breached → AUTO_BLOCK`
+            ]
+          );
         }
 
-        // ESCALATE
+        // ESCALATE APPROVAL
         if (escalation_level === "ESCALATE") {
 
           await pool.query(
@@ -161,35 +173,20 @@ setInterval(async () => {
           await pool.query(
             `
             INSERT INTO audit_event_log
-            (invoice_id, organization_id, event_type, severity, description)
+            (invoice_id, organization_id, old_state, new_state, reason)
             VALUES ($1,$2,$3,$4,$5)
             `,
             [
               invoice_id,
               organization_id,
-              "SLA_ESCALATED",
-              "HIGH",
-              `Escalation triggered for state ${state_name}`
+              state_name,
+              state_name,
+              `SLA escalation triggered`
             ]
           );
         }
 
-        // Log breach
-        await pool.query(
-          `
-          INSERT INTO audit_event_log
-          (invoice_id, organization_id, event_type, severity, description)
-          VALUES ($1,$2,$3,$4,$5)
-          `,
-          [
-            invoice_id,
-            organization_id,
-            "SLA_BREACH",
-            "HIGH",
-            `SLA breached for state ${state_name}. Action: ${escalation_level}`
-          ]
-        );
-
+        // Emit event for orchestrator re-check
         await redis.xAdd("invoice_events", "*", {
           invoice_id,
           organization_id
