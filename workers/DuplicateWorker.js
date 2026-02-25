@@ -33,7 +33,7 @@ export async function execute(context) {
 
   const invoice_number = data.invoice_number;
   const vendor_name = data.vendor_name;
-  const total_amount = data.total;
+  const total_amount = data.total_amount;
 
   if (!invoice_number || !vendor_name || !total_amount) {
     return {

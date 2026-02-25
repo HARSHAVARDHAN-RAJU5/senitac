@@ -45,11 +45,11 @@ export const runMatching = async (context) => {
 
   const invoice = invoiceRes.rows[0].data || {};
 
-  const invoiceSubtotal = parseFloat(invoice.subtotal || 0);
+  const invoiceTotal = parseFloat(invoice.total_amount || 0);
   const poNumber = invoice.po_number || null;
 
-  if (!invoiceSubtotal) {
-    return { success: false, reason: "Invoice subtotal missing" };
+  if (!invoiceTotal) {
+    return { success: false, reason: "Invoice total missing" };
   }
 
   const tolerance =
@@ -77,7 +77,7 @@ export const runMatching = async (context) => {
     }
   }
 
-  // 4️⃣ Fallback: vendor + tolerance match (using subtotal)
+  // 4️⃣ Fallback: vendor + tolerance match (using TOTAL)
   if (!po) {
     const vendorPOs = await db.query(
       `
@@ -94,7 +94,7 @@ export const runMatching = async (context) => {
       if (!poAmount) return false;
 
       const variance =
-        Math.abs(invoiceSubtotal - poAmount) / poAmount;
+        Math.abs(invoiceTotal - poAmount) / poAmount;
 
       return variance <= tolerance;
     });
@@ -106,7 +106,7 @@ export const runMatching = async (context) => {
     }
   }
 
-  // 5️⃣ Strict variance check
+  // 5️⃣ Strict variance check (TOTAL vs TOTAL)
   if (po) {
 
     const poAmount = parseFloat(po.total_amount || 0);
@@ -116,7 +116,7 @@ export const runMatching = async (context) => {
     } else {
 
       const variance =
-        Math.abs(invoiceSubtotal - poAmount) / poAmount;
+        Math.abs(invoiceTotal - poAmount) / poAmount;
 
       if (variance > tolerance) {
         price_variance_flag = true;
